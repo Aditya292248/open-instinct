@@ -1,6 +1,8 @@
 export interface AppsGuidanceOptions {
   /** True when the session has no toolkit allowlist: any app can be requested by name. */
   anyApp?: boolean;
+  /** Configured toolkits left out because the Composio project has no auth config for them. */
+  unavailable?: string[];
 }
 
 /**
@@ -20,6 +22,12 @@ export function appsGuidance(connected: string[], missing: string[], opts: AppsG
   }
   if (missing.length > 0) {
     lines.push(`Not connected: ${missing.join(", ")}.`);
+  }
+  const unavailable = opts.unavailable ?? [];
+  if (unavailable.length > 0) {
+    lines.push(
+      `Not available yet: ${unavailable.join(", ")}. The person running this agent must add a Composio auth config for ${unavailable.length === 1 ? "it" : "them"} first; until then apps_connect cannot connect ${unavailable.length === 1 ? "it" : "them"}. Say so plainly if the owner asks.`,
+    );
   }
   if (opts.anyApp) {
     lines.push(

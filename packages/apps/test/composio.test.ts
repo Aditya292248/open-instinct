@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StateDir } from "@open-instinct/core";
-import { ALL_TOOLKITS, APPS_STATE_FILE, ComposioApps, normalizeToolkits, wantsAllToolkits, type ComposioClientLike, type ComposioSessionLike, type SessionCreateConfig } from "../src/composio.js";
+import { ALL_TOOLKITS, APPS_STATE_FILE, ComposioApps, OPENAI_COMPLETIONS_TOOL_LIMIT, composioModeFor, normalizeToolkits, toolkitsWithoutAuthConfig, wantsAllToolkits, type ComposioClientLike, type ComposioSessionLike, type SessionCreateConfig } from "../src/composio.js";
 import type { McpToolSource } from "../src/wrap.js";
 
 function fakeState(initial: Record<string, unknown> = {}): StateDir & { files: Record<string, unknown> } {
@@ -137,6 +137,128 @@ describe("ComposioApps.connect", () => {
   it("rejects missing credentials up front", () => {
     expect(() => new ComposioApps({ ...base, apiKey: "", state: fakeState() })).toThrow(/apiKey/);
     expect(() => new ComposioApps({ ...base, userId: "", state: fakeState() })).toThrow(/userId/);
+  });
+});
+
+/** An error shaped like the Composio SDK's APIError: `status`, a "<status> <body>" message and the parsed body. */
+function apiError(status: number, body: unknown): Error {
+  const msg = typeof (body as { message?: unknown })?.message === "string" ? (body as { message: string }).message : JSON.stringify(body);
+  return Object.assign(new Error(`${status} ${msg}`), { status, error: body });
+}
+
+/** A client whose first N creates fail with the given errors, then succeed. */
+function failingComposio(errors: Error[]) {
+  const created: Array<{ userId: string; config: SessionCreateConfig }> = [];
+  const client: ComposioClientLike = {
+    sessions: {
+      create: async (userId, config) => {
+        created.push({ userId, config });
+        const err = errors.shift();
+        if (err) throw err;
+        return fakeSession(`sess_new_${created.length}`);
+      },
+      use: async (id) => fakeSession(id),
+    },
+  };
+  return { client, created };
+}
+
+const noContactsConfig = () =>
+  apiError(400, { error: { message: "Toolkits googlecontacts require auth configs but none exist. Create an auth config for them first.", code: 4302 } });
+
+describe("ComposioApps when the project lacks an auth config", () => {
+  const three = { ...base, toolkits: ["gmail", "googlecalendar", "googlecontacts"] };
+
+  it("drops the toolkits Composio refused, retries once, and keeps the rest of the apps", async () => {
+    const state = fakeState();
+    const composio = failingComposio([noContactsConfig()]);
+    const logs: string[] = [];
+    const apps = new ComposioApps({ ...three, state, logger: (m) => logs.push(m), adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
+    await apps.connect();
+    expect(composio.created.map((c) => c.config.toolkits)).toEqual([
+      ["gmail", "googlecalendar", "googlecontacts"],
+      ["gmail", "googlecalendar"],
+    ]);
+    // The retry keeps the rest of the config: direct preset, connections, MCP.
+    expect(composio.created[1]?.config).toMatchObject({ sessionPreset: "direct_tools", manageConnections: { enable: true }, mcp: true });
+    expect(apps.sessionId).toBe("sess_new_2");
+    expect(apps.unavailableToolkits).toEqual(["googlecontacts"]);
+    expect(apps.toolkitSlugs).toEqual(["gmail", "googlecalendar"]);
+    expect(state.files[APPS_STATE_FILE]).toMatchObject({ sessionId: "sess_new_2", toolkits: ["gmail", "googlecalendar"] });
+    expect(logs.join("\n")).toMatch(/no auth config for googlecontacts.*gmail, googlecalendar only/);
+  });
+
+  it("reports connection state only for the toolkits that made it into the session", async () => {
+    const toolkits = vi.fn(async () => ({ items: [{ slug: "gmail", connection: { isActive: true } }] }));
+    const composio = failingComposio([noContactsConfig()]);
+    composio.client.sessions.create = (async (userId: string, config: SessionCreateConfig) => {
+      composio.created.push({ userId, config });
+      if (composio.created.length === 1) throw noContactsConfig();
+      return fakeSession("s", { toolkits });
+    }) as ComposioClientLike["sessions"]["create"];
+    const apps = new ComposioApps({ ...three, state: fakeState(), adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
+    const status = await apps.connectedToolkits();
+    expect(status.map((s) => s.slug)).toEqual(["gmail", "googlecalendar"]);
+    expect(toolkits).toHaveBeenCalledWith(expect.objectContaining({ toolkits: ["gmail", "googlecalendar"] }));
+  });
+
+  it("does not retry other errors", async () => {
+    const unauthorized = apiError(401, { error: { message: "Invalid API key" } });
+    const composio = failingComposio([unauthorized]);
+    const apps = new ComposioApps({ ...three, state: fakeState(), adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
+    await expect(apps.connect()).rejects.toBe(unauthorized);
+    expect(composio.created).toHaveLength(1);
+    expect(apps.unavailableToolkits).toEqual([]);
+  });
+
+  it("gives up when every toolkit lacks an auth config, and retries only once", async () => {
+    const all = apiError(400, { message: "Toolkits gmail, googlecalendar, googlecontacts require auth configs but none exist" });
+    const composio = failingComposio([all]);
+    const apps = new ComposioApps({ ...three, state: fakeState(), adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
+    await expect(apps.connect()).rejects.toBe(all);
+    expect(composio.created).toHaveLength(1);
+
+    const twice = failingComposio([noContactsConfig(), apiError(400, { message: "Toolkits googlecalendar require auth configs but none exist" })]);
+    const again = new ComposioApps({ ...three, state: fakeState(), adapters: { createComposio: () => twice.client, connectMcp: fakeMcp().connectMcp } });
+    await expect(again.connect()).rejects.toThrow(/googlecalendar/);
+    expect(twice.created).toHaveLength(2);
+  });
+});
+
+describe("toolkitsWithoutAuthConfig", () => {
+  const requested = ["gmail", "googlecalendar", "googlecontacts"];
+
+  it("returns the requested toolkits the error names, as whole words", () => {
+    expect(toolkitsWithoutAuthConfig(noContactsConfig(), requested)).toEqual(["googlecontacts"]);
+    // The SDK may put the server text in the message or only in the attached body.
+    const bodyOnly = Object.assign(new Error("400 status code (no body)"), { status: 400, error: { detail: "auth configs missing for toolkits: [googlecontacts, gmail]" } });
+    expect(toolkitsWithoutAuthConfig(bodyOnly, requested)).toEqual(["gmail", "googlecontacts"]);
+    // "gmail_extra" is not "gmail"; names nobody asked for are ignored.
+    expect(toolkitsWithoutAuthConfig(apiError(400, { message: "gmail_extra and notion require auth configs but none exist" }), requested)).toEqual([]);
+  });
+
+  it("ignores errors that are not about auth configs", () => {
+    expect(toolkitsWithoutAuthConfig(apiError(400, { message: "googlecontacts is not a valid toolkit" }), requested)).toEqual([]);
+    expect(toolkitsWithoutAuthConfig(apiError(500, { message: "googlecontacts require auth configs but none exist" }), requested)).toEqual([]);
+    expect(toolkitsWithoutAuthConfig(new Error("fetch failed"), requested)).toEqual([]);
+    expect(toolkitsWithoutAuthConfig(undefined, requested)).toEqual([]);
+  });
+});
+
+describe("composioModeFor", () => {
+  it("uses router for an OpenAI-style chat completions model, which caps tools at 128", () => {
+    expect(OPENAI_COMPLETIONS_TOOL_LIMIT).toBe(128);
+    expect(composioModeFor({}, "openai-completions")).toEqual({ mode: "router", reason: expect.stringContaining("128") });
+    expect(composioModeFor({}, "anthropic-messages")).toEqual({ mode: "direct", reason: "default" });
+    expect(composioModeFor({}, undefined).mode).toBe("direct");
+  });
+
+  it("lets COMPOSIO_MODE override in either direction and ignores anything else", () => {
+    expect(composioModeFor({ COMPOSIO_MODE: "direct" }, "openai-completions")).toEqual({ mode: "direct", reason: "COMPOSIO_MODE" });
+    expect(composioModeFor({ COMPOSIO_MODE: " Router " }, "anthropic-messages")).toEqual({ mode: "router", reason: "COMPOSIO_MODE" });
+    const bad = composioModeFor({ COMPOSIO_MODE: "fast" }, "openai-completions");
+    expect(bad.mode).toBe("router");
+    expect(bad.reason).toMatch(/COMPOSIO_MODE=fast is not direct or router/);
   });
 });
 

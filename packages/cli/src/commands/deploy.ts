@@ -92,6 +92,7 @@ export function buildCreateBody(input: DeployInput): CreateAgentBody {
   }
   pushVar(vars, "COMPOSIO_API_KEY", env.COMPOSIO_API_KEY, true);
   pushVar(vars, "COMPOSIO_TOOLKITS", env.COMPOSIO_TOOLKITS ?? (config.apps.toolkits.length ? config.apps.toolkits.join(",") : undefined), false);
+  pushVar(vars, "COMPOSIO_MODE", env.COMPOSIO_MODE, false);
   pushVar(vars, "BRAVE_SEARCH_API_KEY", env.BRAVE_SEARCH_API_KEY, true);
   pushVar(vars, "CONTEXT_DEV_API_KEY", env.CONTEXT_DEV_API_KEY, true);
   pushVar(vars, "AMPLE_CLIENT_ID", env.AMPLE_CLIENT_ID, false);
