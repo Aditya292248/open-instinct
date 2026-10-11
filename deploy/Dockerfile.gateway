@@ -18,6 +18,7 @@ COPY packages/context/package.json packages/context/
 COPY packages/apps/package.json packages/apps/
 COPY packages/network/package.json packages/network/
 COPY packages/payments/package.json packages/payments/
+COPY packages/ample/package.json packages/ample/
 COPY packages/server/package.json packages/server/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/cli/package.json packages/cli/
