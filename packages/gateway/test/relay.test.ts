@@ -143,3 +143,47 @@ describe("EventDeduper", () => {
     expect(d.seen("d")).toBe(true);
   });
 });
+
+describe("agent readiness", () => {
+  it("holds a message for a brand-new agent that Maritime says is still deploying, and forgets the id so it can be retried", async () => {
+    const d = deps();
+    d.mar.agentStatus["agt_42"] = "deploying";
+    const user = readyUser({ createdAt: new Date().toISOString() });
+    const raw = Buffer.from(JSON.stringify(imessageEvent("evt_young", "conv_1")));
+    expect(await relayEvent(user, raw, signHeaders(raw, user.signingKey), d.deps)).toEqual({ status: "rejected", reason: "agent deploying" });
+    expect(d.mar.calls.map((c) => c.method)).toEqual(["GET"]);
+    d.mar.agentStatus["agt_42"] = "active";
+    expect(await relayEvent(user, raw, signHeaders(raw, user.signingKey), d.deps)).toEqual({ status: "forwarded" });
+    expect(d.mar.calls.map((c) => c.method)).toEqual(["GET", "GET", "POST"]);
+  });
+
+  it("skips the status check for an agent older than the window, and can be forced on or off", async () => {
+    const d = deps();
+    d.mar.agentStatus["agt_42"] = "deploying";
+    const old = readyUser();
+    const raw = Buffer.from(JSON.stringify(imessageEvent("evt_old", "conv_1")));
+    expect(await relayEvent(old, raw, signHeaders(raw, old.signingKey), d.deps)).toEqual({ status: "forwarded" });
+    expect(d.mar.calls.map((c) => c.method)).toEqual(["POST"]);
+    const forced = { ...d.deps, checkAgentStatus: true as const };
+    const raw2 = Buffer.from(JSON.stringify(imessageEvent("evt_old2", "conv_1")));
+    expect(await relayEvent(old, raw2, signHeaders(raw2, old.signingKey), forced)).toMatchObject({ status: "rejected", reason: "agent deploying" });
+    const off = { ...d.deps, checkAgentStatus: false as const };
+    const young = readyUser({ createdAt: new Date().toISOString() });
+    const raw3 = Buffer.from(JSON.stringify(imessageEvent("evt_young2", "conv_1")));
+    expect(await relayEvent(young, raw3, signHeaders(raw3, young.signingKey), off)).toEqual({ status: "forwarded" });
+  });
+
+  it("treats a 200 with a null response and no error as not delivered", async () => {
+    const d = deps();
+    const user = readyUser();
+    const raw = Buffer.from(JSON.stringify(imessageEvent("evt_null", "conv_1")));
+    d.mar.queue.push({ body: { response: null } }, { body: { response: null } }, { body: { response: null } });
+    const r = await relayEvent(user, raw, signHeaders(raw, user.signingKey), d.deps);
+    expect(r.status).toBe("rejected");
+    expect(r.reason).toContain("accepted without a response");
+    d.mar.queue.push({ body: { response: null } });
+    expect(await relayEvent(user, raw, signHeaders(raw, user.signingKey), d.deps)).toEqual({ status: "forwarded" });
+    expect(d.mar.queue).toHaveLength(0);
+  });
+});
+
