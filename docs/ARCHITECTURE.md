@@ -216,7 +216,7 @@ Maritime's documentation work unchanged.
 
 ## Trust and permissions
 
-Six tiers: `owner`, `partner`, `family`, `friend`, `contact`, `stranger`. Each tier has default
+Seven tiers: `owner`, `staff` (your own agents working as a team), `partner`, `family`, `friend`, `contact`, `stranger`. Each tier has default
 capabilities; the owner adds scoped, time-boxed grants ("Sam can book us dinner this week").
 Anything not granted is denied. Purchases and calendar writes by non-owners default to
 "ask the owner", which sends the owner a one-line approval text.

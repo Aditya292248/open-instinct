@@ -19,9 +19,13 @@ import type {
 
 const FILE = "policy.json";
 
-type Row = [owner: Permission, partner: Permission, family: Permission, friend: Permission, contact: Permission, stranger: Permission];
+type Row = [owner: Permission, staff: Permission, partner: Permission, family: Permission, friend: Permission, contact: Permission, stranger: Permission];
 
-// Columns follow TIER_ORDER: owner, partner, family, friend, contact, stranger.
+// Columns follow TIER_ORDER: owner, staff, partner, family, friend, contact, stranger.
+// `staff` is an agent that works for the same owner (a teammate). It gets the owner's working
+// capabilities; anything that commits the owner (calendar writes, outside email, bookings,
+// spend) asks the owner first, and it never changes the owner's own records (memory, trust,
+// schedules, invitations).
 // "intro" and "partial" are allowed outcomes that carry a hint for the prompt.
 // `web.read` (web_search, web_fetch; public hosts only, see core-tools.ts) and
 // `apps.use` (Composio app tools) are transport capabilities: the specific
@@ -29,40 +33,40 @@ type Row = [owner: Permission, partner: Permission, family: Permission, friend: 
 // gating, so they are open for everyone the owner has placed in a tier and closed
 // for contacts and strangers. Both rows appear in docs/PERMISSIONS.md.
 const ROWS: Record<Capability, Row> = {
-  "converse": ["yes", "yes", "yes", "yes", "yes", "intro"],
-  "owner.relay": ["yes", "yes", "yes", "yes", "yes", "yes"],
-  "owner.profile.public": ["yes", "yes", "yes", "yes", "yes", "no"],
-  "owner.profile.preferences": ["yes", "yes", "partial", "partial", "no", "no"],
-  "owner.location.exact": ["yes", "yes", "no", "no", "no", "no"],
-  "owner.location.approx": ["yes", "yes", "yes", "no", "no", "no"],
-  "calendar.freebusy": ["yes", "yes", "yes", "yes", "no", "no"],
-  "calendar.read": ["yes", "yes", "no", "no", "no", "no"],
-  "calendar.write": ["yes", "ask", "ask", "no", "no", "no"],
-  "email.read": ["yes", "no", "no", "no", "no", "no"],
-  "email.send": ["yes", "ask", "no", "no", "no", "no"],
-  "contacts.read": ["yes", "partial", "no", "no", "no", "no"],
-  "plans.propose": ["yes", "yes", "yes", "yes", "no", "no"],
-  "plans.commit": ["yes", "ask", "ask", "ask", "no", "no"],
-  "purchase": ["limit", "ask", "no", "no", "no", "no"],
-  "travel.book": ["limit", "ask", "no", "no", "no", "no"],
-  "computer.use": ["yes", "no", "no", "no", "no", "no"],
-  "files.read": ["yes", "no", "no", "no", "no", "no"],
-  "files.write": ["yes", "no", "no", "no", "no", "no"],
-  "memory.write": ["yes", "no", "no", "no", "no", "no"],
-  "network.ask": ["yes", "yes", "yes", "yes", "no", "no"],
-  "network.invite": ["yes", "no", "no", "no", "no", "no"],
-  "trust.manage": ["yes", "no", "no", "no", "no", "no"],
-  "schedule.manage": ["yes", "no", "no", "no", "no", "no"],
+  "converse": ["yes", "yes", "yes", "yes", "yes", "yes", "intro"],
+  "owner.relay": ["yes", "yes", "yes", "yes", "yes", "yes", "yes"],
+  "owner.profile.public": ["yes", "yes", "yes", "yes", "yes", "yes", "no"],
+  "owner.profile.preferences": ["yes", "yes", "yes", "partial", "partial", "no", "no"],
+  "owner.location.exact": ["yes", "yes", "yes", "no", "no", "no", "no"],
+  "owner.location.approx": ["yes", "yes", "yes", "yes", "no", "no", "no"],
+  "calendar.freebusy": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
+  "calendar.read": ["yes", "yes", "yes", "no", "no", "no", "no"],
+  "calendar.write": ["yes", "ask", "ask", "ask", "no", "no", "no"],
+  "email.read": ["yes", "yes", "no", "no", "no", "no", "no"],
+  "email.send": ["yes", "ask", "ask", "no", "no", "no", "no"],
+  "contacts.read": ["yes", "yes", "partial", "no", "no", "no", "no"],
+  "plans.propose": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
+  "plans.commit": ["yes", "ask", "ask", "ask", "ask", "no", "no"],
+  "purchase": ["limit", "ask", "ask", "no", "no", "no", "no"],
+  "travel.book": ["limit", "ask", "ask", "no", "no", "no", "no"],
+  "computer.use": ["yes", "yes", "no", "no", "no", "no", "no"],
+  "files.read": ["yes", "yes", "no", "no", "no", "no", "no"],
+  "files.write": ["yes", "yes", "no", "no", "no", "no", "no"],
+  "memory.write": ["yes", "no", "no", "no", "no", "no", "no"],
+  "network.ask": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
+  "network.invite": ["yes", "no", "no", "no", "no", "no", "no"],
+  "trust.manage": ["yes", "no", "no", "no", "no", "no", "no"],
+  "schedule.manage": ["yes", "no", "no", "no", "no", "no", "no"],
   // web.read: fetch and search public web pages (never loopback, private or metadata hosts).
-  "web.read": ["yes", "yes", "yes", "yes", "no", "no"],
+  "web.read": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
   // apps.use: call connected app tools; each app tool also carries its own capability.
-  "apps.use": ["yes", "yes", "yes", "yes", "no", "no"],
+  "apps.use": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
 };
 
 /** Capabilities that move money. The owner gets them under the spend policy; a grant never skips it. */
 export const SPEND_CAPABILITIES: ReadonlySet<Capability> = new Set(["purchase", "travel.book"]);
 
-const TIERS: Tier[] = ["owner", "partner", "family", "friend", "contact", "stranger"];
+const TIERS: Tier[] = ["owner", "staff", "partner", "family", "friend", "contact", "stranger"];
 
 function buildTable(): Record<Tier, Record<Capability, Permission>> {
   const table = {} as Record<Tier, Record<Capability, Permission>>;

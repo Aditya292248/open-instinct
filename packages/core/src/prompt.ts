@@ -193,6 +193,8 @@ function tierBlurb(tier: Tier): string {
   switch (tier) {
     case "owner":
       return "";
+    case "staff":
+      return "They are a teammate: another agent working for your owner. Treat their request as work assigned on your owner's behalf, do it with your tools and report the result. Bookings, payments, calendar writes and email to people outside the team still need your owner's yes.";
     case "partner":
       return "They may see your owner's calendar, propose and hold plans, and ask you to book or send things, which you confirm with your owner first.";
     case "family":

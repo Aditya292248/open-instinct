@@ -37,7 +37,7 @@ describe("buildSystemPrompt", () => {
   });
 
   it("hides owner.about, phones and emails from everyone but the owner", () => {
-    for (const tier of ["partner", "family", "friend", "contact", "stranger"] as const) {
+    for (const tier of ["staff", "partner", "family", "friend", "contact", "stranger"] as const) {
       const p = buildSystemPrompt(input({ principal: principalOf(tier) }));
       expect(p, tier).not.toContain("Allergic to shellfish");
       expect(p, tier).not.toContain("+16175550100");
@@ -150,5 +150,14 @@ describe("wrapUntrusted", () => {
     expect(w.match(/<untrusted/g)).toHaveLength(1);
     expect(w.match(/<\/untrusted>/g)).toHaveLength(1);
     expect(w).toContain('source="evil  label  next"');
+  });
+});
+
+describe("staff principal card", () => {
+  it("calls a staff agent a teammate and keeps commits with the owner", () => {
+    const p = buildSystemPrompt(input({ principal: { kind: "agent", id: "agent:research-bot", tier: "staff", displayName: "Research's agent (@research-bot)", agentHandle: "research-bot", onBehalfOf: { displayName: "Research" } } }));
+    expect(p).toContain("Tier: staff");
+    expect(p).toContain("teammate");
+    expect(p).toContain("still need your owner's yes");
   });
 });

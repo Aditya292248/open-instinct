@@ -2,6 +2,7 @@
  * People the owner knows, with their trust tier and the addresses that identify
  * them. Stored as a plain JSON array in contacts.json so the owner can edit it.
  */
+import fs from "node:fs";
 import type { StateDir } from "./state.js";
 import { isReservedHandle, normalizeEmail, normalizeHandle, normalizePhone } from "./principal.js";
 import type { Contact, Tier } from "./types.js";
@@ -31,15 +32,32 @@ function copy(c: Contact): Contact {
 export class ContactStore {
   private readonly state: StateDir;
   private cache: Contact[] | undefined;
+  /** Modification time of contacts.json when the cache was filled. */
+  private cacheMtime: number | undefined;
 
   constructor(state: StateDir) {
     this.state = state;
   }
 
+  /** The file's mtime, or undefined when it does not exist. */
+  private mtime(): number | undefined {
+    try {
+      return fs.statSync(this.state.path(FILE)).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Re-read the file when something else wrote it (the owner in an editor, a host that
+   * seeds teammates), so a change applies without restarting the agent.
+   */
   private load(): Contact[] {
-    if (!this.cache) {
+    const mtime = this.mtime();
+    if (!this.cache || mtime !== this.cacheMtime) {
       const raw = this.state.readJson<unknown>(FILE, []);
       this.cache = Array.isArray(raw) ? (raw as Contact[]) : [];
+      this.cacheMtime = mtime;
     }
     return this.cache;
   }
@@ -47,6 +65,7 @@ export class ContactStore {
   private save(list: Contact[]): void {
     this.cache = list;
     this.state.writeJson(FILE, list);
+    this.cacheMtime = this.mtime();
   }
 
   all(): Contact[] {

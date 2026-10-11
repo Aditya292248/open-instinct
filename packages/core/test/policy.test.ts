@@ -46,10 +46,18 @@ describe("DEFAULT_TIER_TABLE", () => {
     expect(DEFAULT_TIER_TABLE.friend["owner.location.approx"]).toBe("no");
   });
 
-  it("gives only the owner the dangerous capabilities", () => {
-    for (const cap of ["computer.use", "files.read", "files.write", "memory.write", "network.invite", "trust.manage", "schedule.manage", "email.read"] as Capability[]) {
+  it("gives only the owner the capabilities that change the owner's own records", () => {
+    for (const cap of ["memory.write", "network.invite", "trust.manage", "schedule.manage"] as Capability[]) {
       expect(DEFAULT_TIER_TABLE.owner[cap]).toBe("yes");
       for (const tier of TIER_ORDER.filter((t) => t !== "owner")) expect(DEFAULT_TIER_TABLE[tier][cap], `${tier}/${cap}`).toBe("no");
+    }
+  });
+
+  it("gives the working capabilities to the owner and staff only", () => {
+    for (const cap of ["computer.use", "files.read", "files.write", "email.read"] as Capability[]) {
+      expect(DEFAULT_TIER_TABLE.owner[cap]).toBe("yes");
+      expect(DEFAULT_TIER_TABLE.staff[cap]).toBe("yes");
+      for (const tier of TIER_ORDER.filter((t) => t !== "owner" && t !== "staff")) expect(DEFAULT_TIER_TABLE[tier][cap], `${tier}/${cap}`).toBe("no");
     }
   });
 });
@@ -66,18 +74,18 @@ describe("PolicyEngine.evaluate across tiers", () => {
   });
 
   it("gates calendar.freebusy at friend and above", () => {
-    const expected: Record<string, string> = { owner: "allow", partner: "allow", family: "allow", friend: "allow", contact: "deny", stranger: "deny" };
+    const expected: Record<string, string> = { owner: "allow", staff: "allow", partner: "allow", family: "allow", friend: "allow", contact: "deny", stranger: "deny" };
     for (const tier of TIER_ORDER) expect(engine.evaluate(principalOf(tier), meta(["calendar.freebusy"]), {}).outcome, tier).toBe(expected[tier]);
   });
 
-  it("gates calendar.write as yes/ask/ask/no/no/no", () => {
-    const expected: Record<string, string> = { owner: "allow", partner: "ask", family: "ask", friend: "deny", contact: "deny", stranger: "deny" };
+  it("gates calendar.write as yes/ask/ask/ask/no/no/no", () => {
+    const expected: Record<string, string> = { owner: "allow", staff: "ask", partner: "ask", family: "ask", friend: "deny", contact: "deny", stranger: "deny" };
     for (const tier of TIER_ORDER) expect(engine.evaluate(principalOf(tier), meta(["calendar.write"]), {}).outcome, tier).toBe(expected[tier]);
   });
 
-  it("keeps computer.use for the owner only", () => {
+  it("keeps computer.use for the owner and staff only", () => {
     for (const tier of TIER_ORDER) {
-      expect(engine.evaluate(principalOf(tier), meta(["computer.use"]), {}).outcome).toBe(tier === "owner" ? "allow" : "deny");
+      expect(engine.evaluate(principalOf(tier), meta(["computer.use"]), {}).outcome, tier).toBe(tier === "owner" || tier === "staff" ? "allow" : "deny");
     }
   });
 
@@ -318,5 +326,26 @@ describe("loadPolicy / savePolicy", () => {
     expect(partial.spend.perDayUsd).toBe(300);
     expect(partial.grants).toEqual([]);
     expect(partial.strangerLimits.conversationsPerDay).toBe(3);
+  });
+});
+
+describe("staff tier", () => {
+  it("sits between owner and partner and gets the owner's working capabilities", () => {
+    expect(TIER_ORDER.indexOf("staff")).toBe(1);
+    for (const cap of ["computer.use", "files.read", "files.write", "email.read", "calendar.read", "web.read", "apps.use", "network.ask"] as const) {
+      expect(DEFAULT_TIER_TABLE.staff[cap], cap).toBe("yes");
+    }
+  });
+
+  it("asks the owner before anything that commits them", () => {
+    for (const cap of ["calendar.write", "email.send", "plans.commit", "purchase", "travel.book"] as const) {
+      expect(DEFAULT_TIER_TABLE.staff[cap], cap).toBe("ask");
+    }
+  });
+
+  it("never touches the owner's own records", () => {
+    for (const cap of ["memory.write", "trust.manage", "schedule.manage", "network.invite"] as const) {
+      expect(DEFAULT_TIER_TABLE.staff[cap], cap).toBe("no");
+    }
   });
 });

@@ -107,3 +107,24 @@ describe("ContactStore", () => {
     expect(store.get("sam-lee")?.phones).toEqual([]);
   });
 });
+
+describe("ContactStore reload", () => {
+  it("sees a contacts.json written by someone else without a restart", async () => {
+    const state = tempState();
+    const store = new ContactStore(state);
+    store.upsert({ name: "Sam Lee" });
+    expect(store.all()).toHaveLength(1);
+    // Another process (a host seeding a teammate) rewrites the file. Make sure the mtime moves.
+    await new Promise((r) => setTimeout(r, 15));
+    const now = new Date().toISOString();
+    state.writeJson("contacts.json", [
+      ...store.all(),
+      { id: "research-bot", name: "Research", tier: "staff", phones: [], emails: [], agentHandle: "research-bot", createdAt: now, updatedAt: now },
+    ]);
+    expect(store.all()).toHaveLength(2);
+    expect(store.findByHandle("research-bot")?.tier).toBe("staff");
+    // Our own writes keep working and do not lose the external entry.
+    store.setTier("sam-lee", "family");
+    expect(new ContactStore(state).all().map((c) => c.id).sort()).toEqual(["research-bot", "sam-lee"]);
+  });
+});
