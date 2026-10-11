@@ -247,3 +247,12 @@ The reply comes back on iMessage.
 - [PERMISSIONS.md](PERMISSIONS.md): tiers, capabilities, grants
 - [PAYMENTS.md](PAYMENTS.md): the Stripe Link wallet, a separate rail from Composio
 - [`packages/apps/README.md`](../packages/apps/README.md): API and tests
+
+## When a toolkit has no auth config
+
+Composio opens a session only when every requested toolkit has an auth config in
+your project. A toolkit it does not manage auth for (Google Contacts, for one)
+answers `400 ... require auth configs but none exist`. Rather than losing every
+app, the agent drops that toolkit, logs `composio: no auth config for
+googlecontacts; continuing without it`, and opens the session with the rest. Add
+the auth config in the Composio dashboard and restart the agent to get it back.
