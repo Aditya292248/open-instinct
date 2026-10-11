@@ -87,8 +87,9 @@ export interface SessionCreateConfig {
 }
 
 /** Pages of connected toolkits fetched in all mode before giving up. */
-const MAX_CONNECTED_PAGES = 10;
-const CONNECTED_PAGE_SIZE = 100;
+const MAX_CONNECTED_PAGES = 20;
+/** Composio's connected-accounts endpoint rejects a limit above 50 with a 400. */
+const CONNECTED_PAGE_SIZE = 50;
 
 export class ComposioApps {
   private readonly opts: ComposioAppsOptions;
@@ -97,6 +98,8 @@ export class ComposioApps {
   private client?: McpToolSource;
   private connecting?: Promise<void>;
   private cachedTools?: RegisteredTool[];
+  /** Toolkits Composio refused at session creation (no auth config in the project). Dropped so the rest still work. */
+  private readonly unavailable = new Set<string>();
 
   constructor(opts: ComposioAppsOptions) {
     if (!opts.apiKey) throw new Error("ComposioApps needs an apiKey (COMPOSIO_API_KEY)");
@@ -119,7 +122,12 @@ export class ComposioApps {
 
   /** Normalized toolkit slugs, or `["*"]` in all mode. */
   get toolkitSlugs(): string[] {
-    return normalizeToolkits(this.opts.toolkits);
+    return normalizeToolkits(this.opts.toolkits).filter((t) => !this.unavailable.has(t));
+  }
+
+  /** Toolkits dropped because Composio has no auth config for them in this project. */
+  get unavailableToolkits(): string[] {
+    return [...this.unavailable];
   }
 
   get sessionId(): string | undefined {
@@ -172,7 +180,19 @@ export class ComposioApps {
       // direct_tools lists each app tool so the guard sees GMAIL_SEND_EMAIL, not a generic executor.
       if (this.mode === "direct") config.sessionPreset = "direct_tools";
     }
-    const session = await this.composio.sessions.create(this.opts.userId, config);
+    let session: ComposioSessionLike;
+    try {
+      session = await this.composio.sessions.create(this.opts.userId, config);
+    } catch (err) {
+      // "The following toolkits require auth configs but none exist and cannot be auto-created: googlecontacts."
+      // One toolkit the project never set up must not take Gmail and Calendar down with it.
+      const missing = toolkitsWithoutAuthConfig(messageOf(err)).filter((t) => this.toolkitSlugs.includes(t));
+      if (missing.length === 0 || this.allToolkits) throw err;
+      for (const t of missing) this.unavailable.add(t);
+      this.log(`composio: no auth config for ${missing.join(", ")}; continuing without ${missing.length === 1 ? "it" : "them"}`);
+      if (this.toolkitSlugs.length === 0) throw err;
+      return this.openSession();
+    }
     const state: AppsState = {
       sessionId: session.sessionId,
       userId: this.opts.userId,
@@ -275,6 +295,13 @@ function sessionMatches(saved: AppsState, userId: string, toolkits: string[], mo
   if ((saved.mode ?? "router") !== mode) return false;
   const a = normalizeToolkits(saved.toolkits ?? []);
   return a.length === toolkits.length && a.every((t, i) => t === toolkits[i]);
+}
+
+/** Toolkit slugs named in Composio's "require auth configs but none exist" error, lower-cased. */
+export function toolkitsWithoutAuthConfig(message: string): string[] {
+  const m = /require auth configs?[^:]*:\s*([a-z0-9_,\s-]+?)(?:\.|\s+Please|$)/i.exec(message);
+  if (!m?.[1]) return [];
+  return m[1].split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
 }
 
 function messageOf(err: unknown): string {

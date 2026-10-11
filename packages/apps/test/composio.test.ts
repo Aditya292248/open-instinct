@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StateDir } from "@open-instinct/core";
-import { ALL_TOOLKITS, APPS_STATE_FILE, ComposioApps, normalizeToolkits, wantsAllToolkits, type ComposioClientLike, type ComposioSessionLike, type SessionCreateConfig } from "../src/composio.js";
+import { ALL_TOOLKITS, APPS_STATE_FILE, ComposioApps, normalizeToolkits, toolkitsWithoutAuthConfig, wantsAllToolkits, type ComposioClientLike, type ComposioSessionLike, type SessionCreateConfig } from "../src/composio.js";
 import type { McpToolSource } from "../src/wrap.js";
 
 function fakeState(initial: Record<string, unknown> = {}): StateDir & { files: Record<string, unknown> } {
@@ -24,7 +24,7 @@ function fakeSession(id: string, overrides: Partial<ComposioSessionLike> = {}): 
   };
 }
 
-function fakeComposio(opts: { useFails?: boolean; sessions?: Record<string, ComposioSessionLike> } = {}) {
+function fakeComposio(opts: { useFails?: boolean; sessions?: Record<string, ComposioSessionLike>; createFails?: (config: SessionCreateConfig) => Error | undefined } = {}) {
   const created: Array<{ userId: string; config: SessionCreateConfig }> = [];
   const used: string[] = [];
   let n = 0;
@@ -32,6 +32,8 @@ function fakeComposio(opts: { useFails?: boolean; sessions?: Record<string, Comp
     sessions: {
       create: async (userId, config) => {
         created.push({ userId, config });
+        const fail = opts.createFails?.(config);
+        if (fail) throw fail;
         n += 1;
         return fakeSession(`sess_new_${n}`);
       },
@@ -200,8 +202,8 @@ describe("ComposioApps in all-toolkits mode", () => {
       { slug: "slack", connected: true },
     ]);
     expect(calls).toEqual([
-      { isConnected: true, limit: 100 },
-      { isConnected: true, limit: 100, cursor: "p2" },
+      { isConnected: true, limit: 50 },
+      { isConnected: true, limit: 50, cursor: "p2" },
     ]);
   });
 
@@ -211,7 +213,7 @@ describe("ComposioApps in all-toolkits mode", () => {
     const state = fakeState({ [APPS_STATE_FILE]: { sessionId: "s", userId: "maria", toolkits: ["*"], mode: "router", createdAt: "x" } });
     const apps = new ComposioApps({ ...base, toolkits: ["all"], state, adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
     expect(await apps.connectedToolkits()).toEqual([{ slug: "gmail", connected: true }]);
-    expect(toolkits).toHaveBeenCalledTimes(10);
+    expect(toolkits).toHaveBeenCalledTimes(20);
   });
 
   it("still hands out connect links for any toolkit", async () => {
@@ -314,3 +316,30 @@ describe("wantsAllToolkits", () => {
     expect(wantsAllToolkits([])).toBe(false);
   });
 });
+
+describe("toolkits without an auth config", () => {
+  it("drops the toolkit Composio refuses and opens the session with the rest", async () => {
+    const AUTH_ERR = '400 {"error":{"message":"The following toolkits require auth configs but none exist and cannot be auto-created: googlecontacts. Please specify them in auth_configs.","code":4300}}';
+    const composio = fakeComposio({ createFails: (config) => (config.toolkits?.includes("googlecontacts") ? new Error(AUTH_ERR) : undefined) });
+    const logs: string[] = [];
+    const apps = new ComposioApps({ ...base, toolkits: ["gmail", "googlecalendar", "googlecontacts"], state: fakeState(), logger: (m) => logs.push(m), adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
+    await apps.connect();
+    expect(composio.created.map((c) => c.config.toolkits)).toEqual([["gmail", "googlecalendar", "googlecontacts"], ["gmail", "googlecalendar"]]);
+    expect(apps.toolkitSlugs).toEqual(["gmail", "googlecalendar"]);
+    expect(apps.unavailableToolkits).toEqual(["googlecontacts"]);
+    expect(logs.some((l) => l.includes("no auth config for googlecontacts"))).toBe(true);
+    expect(toolkitsWithoutAuthConfig("The following toolkits require auth configs but none exist and cannot be auto-created: Slack, notion. Please specify them in auth_configs.")).toEqual(["slack", "notion"]);
+    expect(toolkitsWithoutAuthConfig("500 something else")).toEqual([]);
+  });
+
+  it("still fails when every toolkit is refused or the error is something else", async () => {
+    const all = fakeComposio({ createFails: () => new Error("The following toolkits require auth configs but none exist and cannot be auto-created: gmail.") });
+    const apps = new ComposioApps({ ...base, toolkits: ["gmail"], state: fakeState(), adapters: { createComposio: () => all.client, connectMcp: fakeMcp().connectMcp } });
+    await expect(apps.connect()).rejects.toThrow(/auth configs/);
+    const other = fakeComposio({ createFails: () => new Error("401 bad key") });
+    const apps2 = new ComposioApps({ ...base, toolkits: ["gmail", "slack"], state: fakeState(), adapters: { createComposio: () => other.client, connectMcp: fakeMcp().connectMcp } });
+    await expect(apps2.connect()).rejects.toThrow(/401/);
+    expect(other.created).toHaveLength(1);
+  });
+});
+
