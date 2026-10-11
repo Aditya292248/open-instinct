@@ -313,6 +313,7 @@ describe("deploy", () => {
       CONTEXT_DEV_API_KEY: "ctxt_secret_test",
       AMPLE_CLIENT_ID: "agent_test",
       AMPLE_CLIENT_SECRET: "ample_agent_secret_test",
+      COMPOSIO_MODE: "router",
     });
     expect(r.code, r.err).toBe(0);
     const body = JSON.parse(r.out);
@@ -333,6 +334,7 @@ describe("deploy", () => {
     expect(vars.AMPLE_CLIENT_ID).toEqual({ key: "AMPLE_CLIENT_ID", value: "agent_test", isSecret: false });
     expect(vars.AMPLE_CLIENT_SECRET.value).toBe("<redacted>");
     expect(vars.AMPLE_TOKEN).toBeUndefined();
+    expect(vars.COMPOSIO_MODE).toEqual({ key: "COMPOSIO_MODE", value: "router", isSecret: false });
     expect(vars.INSTINCT_OWNER_PHONE).toEqual({ key: "INSTINCT_OWNER_PHONE", value: "+14155550100", isSecret: false });
     expect(vars.INSTINCT_DATA_DIR.value).toBe("/data");
     expect(vars.INSTINCT_MODEL.value).toBe("anthropic/claude-fable-5-1");

@@ -85,7 +85,7 @@ public and needs no registry login. See [DEPLOY-MARITIME.md](DEPLOY-MARITIME.md)
 
 ## 5. Composio (Gmail, Calendar and 1000+ apps)
 
-Variable: `COMPOSIO_API_KEY`, optional `COMPOSIO_TOOLKITS` (default `gmail,googlecalendar,googlecontacts`)
+Variable: `COMPOSIO_API_KEY`, optional `COMPOSIO_TOOLKITS` (default `gmail,googlecalendar,googlecontacts`) and `COMPOSIO_MODE` (`direct` or `router`; see [COMPOSIO.md](COMPOSIO.md#session-mode-composio_mode))
 
 1. Create an account at [composio.dev](https://composio.dev) and open the dashboard.
 2. **Settings**, then **API keys**. Copy the key.

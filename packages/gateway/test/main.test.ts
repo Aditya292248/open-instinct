@@ -51,6 +51,12 @@ describe("Ample for every agent", () => {
     expect(JSON.stringify(env)).not.toContain("agent_shared");
   });
 
+  it("forwards COMPOSIO_MODE so operators can pin the session mode", () => {
+    const cfg = readEnv({ MARITIME_API_KEY: "mk", COMPOSIO_MODE: " router " });
+    expect(cfg.composioMode).toBe("router");
+    expect(agentExtraEnv(cfg)).toEqual({ COMPOSIO_MODE: "router" });
+  });
+
   it("sends nothing extra when neither Context.dev nor Ample is on", () => {
     const cfg = readEnv({ MARITIME_API_KEY: "mk" });
     expect(cfg.ampleSignup).toBe(false);
