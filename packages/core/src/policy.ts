@@ -210,7 +210,7 @@ export class PolicyEngine {
     const ask = (reason: string): PolicyDecision => ({
       outcome: "ask",
       reason,
-      approvalPrompt: `${asker}${label}${amount !== undefined ? ` (${fmtUsd(amount)})` : ""}? Reply YES or NO.`,
+      approvalPrompt: `${asker}${label}${amount !== undefined ? ` (${fmtUsd(amount)})` : ""}?`,
     });
     const merchant = merchantOf(args);
     const blocked = blockedMerchantIn(args, s.blockedMerchants);
@@ -241,7 +241,7 @@ export class PolicyEngine {
     const askDecision: PolicyDecision = {
       outcome: "ask",
       reason: `${capability} requires the owner's approval for tier ${principal.tier}`,
-      approvalPrompt: `${principal.displayName} asks: ${label}${amount !== undefined ? ` (${fmtUsd(amount)})` : ""}. Reply YES or NO.`,
+      approvalPrompt: `${principal.displayName} asks: ${label}${amount !== undefined ? ` (${fmtUsd(amount)})` : ""}. Want me to go ahead?`,
     };
 
     // A blocked merchant is blocked for everyone; no tier, grant or approval opens it.

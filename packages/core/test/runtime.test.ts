@@ -495,8 +495,10 @@ describe("approval flow", () => {
     const ownerText = h.sent.find((s) => s.msg.to === OWNER_PHONE);
     expect(ownerText).toBeDefined();
     expect(ownerText!.msg.channel).toBe("imessage");
-    expect(ownerText!.msg.text).toContain(pending[0]!.token);
+    expect(ownerText!.msg.text).not.toContain(pending[0]!.token);
+    expect(ownerText!.msg.text).not.toMatch(/YES or NO/);
     expect(ownerText!.msg.text).toContain("Sam Lee");
+    expect(ownerText!.msg.text).toMatch(/Want me to go ahead\?$/);
     expect(h.sent.find((s) => s.msg.conversationKey === "imessage:sam")!.msg.text).toBe("Let me check with Maria.");
 
     const blocked = h.runtime.conversation("imessage:sam", samResult.principal).agent.state.messages.find((m) => m.role === "toolResult")!;
@@ -572,7 +574,7 @@ describe("approval scoping", () => {
     const pending = h.deps.approvals.pending();
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ capability: "purchase", amountUsd: 1400, toolName: "buy", requestedBy: "contact:sam-lee" });
-    const approvalTexts = h.sent.filter((s) => s.msg.text.includes(pending[0]!.token));
+    const approvalTexts = h.sent.filter((s) => s.msg.text.includes("$1400.00"));
     expect(approvalTexts).toHaveLength(1);
     expect(approvalTexts[0]!.msg).toMatchObject({ channel: "imessage", conversationKey: "imessage:owner" });
     expect(approvalTexts[0]!.msg.text).toContain("$1400.00");
@@ -752,7 +754,7 @@ describe("group threads", () => {
     expect(h.deps.approvals.pending()).toHaveLength(1);
     expect(h.calls).toHaveLength(0);
     // Approval texts never go to the group thread.
-    const approvalText = h.sent.find((s) => s.msg.text.includes(h.deps.approvals.pending()[0]!.token))!;
+    const approvalText = h.sent.find((s) => s.msg.text.includes("Dinner Thu") && s.msg.text.includes("go ahead"))!;
     expect(approvalText.msg.to).toBe(OWNER_PHONE);
     expect(approvalText.msg.conversationKey).toBeUndefined();
 
@@ -1072,6 +1074,21 @@ describe("restoreMessages", () => {
     const orphan: AgentMessage = { ...assistant(9), content: [{ type: "toolCall", id: "t1", name: "echo", arguments: {} }] } as AgentMessage;
     const restored = restoreMessages([user(1), assistant(1), user(2), orphan], new Date());
     expect(restored.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+  });
+});
+
+describe("afterApproval", () => {
+  it("wakes the conversation that asked and delivers its next reply", async () => {
+    const h = harness();
+    h.faux.setResponses([textTurn("Checking with Maria."), textTurn("Great, Maria is in. Lunch at 12:30?")]);
+    // The approval exists while the first reply goes out, so the A2A task stays in progress rather than completing.
+    const approval = h.deps.approvals.create({ conversationKey: "a2a:ctx1:task:task_1", requestedBy: `agent:${SAM_HANDLE}`, summary: "intro with Sam", capability: "owner.relay" });
+    await h.runtime.handleInbound(a2aFrom(SAM_HANDLE, "Can Maria meet Sam at the conference?"));
+    h.deps.approvals.resolve(approval.token, true);
+    const sentBefore = h.sent.length;
+    await h.runtime.afterApproval({ ...approval, status: "approved" }, true);
+    expect(h.sent.length).toBeGreaterThan(sentBefore);
+    expect(h.sent.at(-1)?.msg).toMatchObject({ channel: "a2a", text: "Great, Maria is in. Lunch at 12:30?" });
   });
 });
 

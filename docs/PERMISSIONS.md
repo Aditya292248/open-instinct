@@ -188,7 +188,7 @@ blocked for every tier, grant or not.
 
 Anything above `askAbove` sends the owner an approval text:
 
-> Book Nopa, Thu 7:00 pm, 2 people, $0 deposit? Reply YES or NO. Token K7P2. (expires in 2 h)
+> Book Nopa, Thu 7:00 pm, 2 people, $0 deposit? Want me to go ahead? (expires in 2 h)
 
 The approval token is stored in `approvals.json`. The owner's reply resolves it; the waiting
 conversation continues with `followUp`.

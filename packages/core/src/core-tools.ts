@@ -14,7 +14,7 @@ import { wrapUntrusted } from "./prompt.js";
 import type { Outbox } from "./runtime.js";
 import type { Scheduler } from "./scheduler.js";
 import { defineTool, textResult, type RegisteredTool, type ToolContext, type ToolResultLike } from "./tools.js";
-import type { AuditKind, InstinctConfig } from "./types.js";
+import type { Approval, AuditKind, InstinctConfig } from "./types.js";
 
 export interface CoreToolDeps {
   memory: MemoryStore;
@@ -29,6 +29,8 @@ export interface CoreToolDeps {
   searchApiKey?: string;
   /** The owner's workspace directory. create_pdf writes under it; without it the tool refuses. */
   workspaceDir?: string;
+  /** Called after approval_settle resolves an approval, so the runtime can wake the conversation that was waiting. */
+  onApprovalSettled?: (approval: Approval, approved: boolean) => Promise<void> | void;
 }
 
 const WEB_TEXT_CAP = 20_000;
@@ -168,7 +170,7 @@ function scheduleTools({ scheduler, config }: CoreToolDeps): RegisteredTool[] {
 // Owner relay
 // ---------------------------------------------------------------------------
 
-function ownerTools({ approvals, config, outbox, audit }: CoreToolDeps): RegisteredTool[] {
+function ownerTools({ approvals, config, outbox, audit, onApprovalSettled }: CoreToolDeps): RegisteredTool[] {
   const ownerPhone = () => config.owner.phones[0];
 
   const sendOwner = async (text: string, ctx: ToolContext): Promise<boolean> => {
@@ -200,7 +202,8 @@ function ownerTools({ approvals, config, outbox, audit }: CoreToolDeps): Registe
       });
       audit.append({ kind: "approval", conversationKey: ctx.conversationKey, principal: ctx.principal.id, detail: { token: approval.token, status: "pending", summary } });
       const who = ctx.principal.kind === "owner" ? "" : ` (from ${ctx.principal.displayName})`;
-      const sent = await sendOwner(`${question}${who} Reply YES or NO. Token ${approval.token}.`, ctx);
+      // The token stays internal: the owner reads a plain question and answers however they like.
+      const sent = await sendOwner(`${question}${who}`, ctx);
       // The question is now the last thing the owner heard from us, so a bare "yes" is about it.
       if (sent) approvals.markPrompted(approval.token);
       return textResult(
@@ -226,7 +229,33 @@ function ownerTools({ approvals, config, outbox, audit }: CoreToolDeps): Registe
     },
   });
 
-  return [askOwner, notifyOwner];
+  const settleApproval = defineTool({
+    name: "approval_settle",
+    label: "Settle approval",
+    description:
+      "Record the owner's answer to a pending approval when they answer in their own words (\"tell him yes\", \"no, skip that\", \"go ahead with the intro\") rather than a plain yes or no. Owner only. Pass the token when more than one approval is pending.",
+    parameters: Type.Object({
+      decision: Type.Union([Type.Literal("yes"), Type.Literal("no")]),
+      token: Type.Optional(Type.String({ description: "The 4-character token from the pending approvals list" })),
+    }),
+    meta: { capabilities: ["converse"], group: "owner", describe: (a) => `settle approval ${argText(a, "token") || "(only pending)"}: ${argText(a, "decision")}` },
+    execute: async ({ decision, token }, ctx) => {
+      if (ctx.principal.kind !== "owner") return { content: [{ type: "text", text: "Only the owner can settle an approval." }], isError: true };
+      const pending = approvals.pending();
+      if (pending.length === 0) return textResult("Nothing is pending.");
+      const wanted = token?.trim().toUpperCase();
+      const target = wanted ? pending.find((a) => a.token === wanted) : pending.length === 1 ? pending[0] : undefined;
+      if (!target) return textResult(`Which one? Pending: ${pending.map((a) => `${a.token}: ${a.summary}`).join("; ")}. Call again with the token.`);
+      const approved = decision === "yes";
+      const resolved = approvals.resolve(target.token, approved);
+      if (!resolved) return textResult("That approval is no longer pending.");
+      audit.append({ kind: "approval", conversationKey: resolved.conversationKey, principal: ctx.principal.id, detail: { token: resolved.token, status: resolved.status, summary: resolved.summary, via: "approval_settle" } });
+      await onApprovalSettled?.(resolved, approved);
+      return textResult(`${approved ? "Approved" : "Denied"}: ${resolved.summary}. The conversation that was waiting has been resumed; confirm to the owner in one line.`);
+    },
+  });
+
+  return [askOwner, notifyOwner, settleApproval];
 }
 
 // ---------------------------------------------------------------------------

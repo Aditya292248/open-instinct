@@ -23,7 +23,7 @@ const stubLookup = async (host: string): Promise<string[]> => {
   return ["93.184.216.34"];
 };
 
-function setup(opts: { fetchImpl?: typeof fetch; searchApiKey?: string; lookup?: (host: string) => Promise<string[]> } = {}) {
+function setup(opts: { fetchImpl?: typeof fetch; searchApiKey?: string; lookup?: (host: string) => Promise<string[]>; onApprovalSettled?: CoreToolDeps["onApprovalSettled"] } = {}) {
   const state = tempState();
   const sent: Array<{ msg: OutboundMessage; principal: Principal }> = [];
   const outbox: Outbox = { send: async (msg, ctx) => void sent.push({ msg, principal: ctx.principal }) };
@@ -64,7 +64,7 @@ describe("coreTools registration", () => {
   it("registers the documented tools with the documented capabilities", () => {
     const { registry } = setup();
     const names = registry.all().map((t) => t.spec.name).sort();
-    expect(names).toEqual(["ask_owner", "audit_read", "create_pdf", "journal_append", "memory_read", "memory_write", "notify_owner", "schedule_create", "schedule_delete", "schedule_list", "web_fetch", "web_search"]);
+    expect(names).toEqual(["approval_settle", "ask_owner", "audit_read", "create_pdf", "journal_append", "memory_read", "memory_write", "notify_owner", "schedule_create", "schedule_delete", "schedule_list", "web_fetch", "web_search"]);
     expect(registry.meta("create_pdf")).toMatchObject({ capabilities: ["files.write"], group: "files" });
     expect(registry.meta("memory_write")?.capabilities).toEqual(["memory.write"]);
     expect(registry.meta("schedule_create")?.capabilities).toEqual(["schedule.manage"]);
@@ -75,6 +75,36 @@ describe("coreTools registration", () => {
     expect(registry.meta("web_search")?.capabilities).toEqual(["web.read"]);
     expect(registry.meta("ask_owner")?.amountUsd?.({ amountUsd: 42 })).toBe(42);
     expect(registry.meta("ask_owner")?.amountUsd?.({})).toBeUndefined();
+  });
+});
+
+describe("approval_settle", () => {
+  it("settles the only pending approval in the owner's words, wakes the waiting conversation, and refuses everyone else", async () => {
+    const settled: Array<{ token: string; approved: boolean }> = [];
+    const { run, text, deps } = setup({ onApprovalSettled: async (a, ok) => void settled.push({ token: a.token, approved: ok }) });
+    expect(text(await run("approval_settle", { decision: "yes" }))).toContain("Nothing is pending");
+    const a = deps.approvals.create({ conversationKey: "a2a:ctx1", requestedBy: "agent:shuja-keen", summary: "intro with Shuja Keen", capability: "owner.relay" });
+    const stranger = await run("approval_settle", { decision: "yes" }, principalOf("stranger"));
+    expect(typeof stranger === "string" ? stranger : stranger.isError).toBeTruthy();
+    expect(deps.approvals.get(a.token)?.status).toBe("pending");
+    expect(text(await run("approval_settle", { decision: "yes" }))).toContain("Approved: intro with Shuja Keen");
+    expect(deps.approvals.get(a.token)?.status).toBe("approved");
+    expect(settled).toEqual([{ token: a.token, approved: true }]);
+    expect(deps.audit.read({ kinds: ["approval"] }).some((e) => e.detail["via"] === "approval_settle")).toBe(true);
+    expect(text(await run("approval_settle", { decision: "no", token: a.token }))).toMatch(/Nothing is pending|no longer pending/);
+  });
+
+  it("asks which one when several are pending and no token is given", async () => {
+    const { run, text, deps } = setup();
+    const a = deps.approvals.create({ conversationKey: "a2a:1", requestedBy: "agent:x", summary: "intro with X", capability: "owner.relay" });
+    const b = deps.approvals.create({ conversationKey: "a2a:2", requestedBy: "agent:y", summary: "intro with Y", capability: "owner.relay" });
+    const ask = text(await run("approval_settle", { decision: "no" }));
+    expect(ask).toContain("Which one?");
+    expect(ask).toContain(a.token);
+    expect(ask).toContain(b.token);
+    expect(text(await run("approval_settle", { decision: "no", token: b.token.toLowerCase() }))).toContain("Denied: intro with Y");
+    expect(deps.approvals.get(a.token)?.status).toBe("pending");
+    expect(deps.approvals.get(b.token)?.status).toBe("denied");
   });
 });
 
@@ -125,7 +155,7 @@ describe("schedule tools", () => {
 });
 
 describe("owner relay tools", () => {
-  it("ask_owner creates an approval, texts the owner with the token, and returns the token", async () => {
+  it("ask_owner creates an approval, texts the owner a plain question, and returns the token to the model only", async () => {
     const { run, text, deps, sent } = setup();
     const partner = principalOf("partner", { displayName: "Sam" });
     const out = text(await run("ask_owner", { question: "Book Nopa Thu 7pm for two?", summary: "Book Nopa Thu 7pm", amountUsd: 0 }, partner));
@@ -137,7 +167,8 @@ describe("owner relay tools", () => {
     expect(sent[0]!.msg).toMatchObject({ channel: "imessage", to: "+16175550100" });
     expect(sent[0]!.msg.text).toContain("Book Nopa Thu 7pm for two?");
     expect(sent[0]!.msg.text).toContain("(from Sam)");
-    expect(sent[0]!.msg.text).toContain(pending[0]!.token);
+    expect(sent[0]!.msg.text).not.toContain(pending[0]!.token);
+    expect(sent[0]!.msg.text).not.toMatch(/YES or NO/);
     expect(deps.audit.read({ kinds: ["approval", "outbound"] })).toHaveLength(2);
   });
 
