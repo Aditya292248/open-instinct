@@ -166,6 +166,19 @@ instinct dev
 | `instinct deploy` | Copies `COMPOSIO_TOOLKITS` (or the list from `config.json`) into the agent |
 | Gateway | Sends `COMPOSIO_TOOLKITS` to every new agent, default list when unset |
 
+`COMPOSIO_TOOLKITS` only seeds `config.json` on an agent's first boot; after that the
+file wins. Changing the variable on a running agent, or on the gateway for agents it
+already created, does nothing. Edit `apps.toolkits` in that agent's `config.json` (or
+run `instinct init --toolkits ...` again) and restart it, or create a new agent.
+
+Each toolkit needs an auth config in your Composio project. Some, such as Gmail and
+Google Calendar, can use Composio's managed one; others, often Google Contacts in a
+new project, need one you create under Auth Configs in the Composio dashboard. When the project lacks one, Composio
+refuses the session for that toolkit. The agent then starts without it, keeps the
+other apps, logs `composio: this Composio project has no auth config for ...`, and
+tells the owner the app is not available yet. Add the auth config and restart the
+agent to bring it in.
+
 Toolkit slugs are lowercase. Find them in the Composio toolkit catalog, for example
 `slack`, `notion`, `github`.
 
@@ -175,6 +188,24 @@ sends, changes a calendar or moves money (table above). That is the safe default
 
 Changing the list makes a new Composio session on the next boot. Existing OAuth
 connections stay, because Composio stores them per user id, not per session.
+
+## Session mode: COMPOSIO_MODE
+
+| `COMPOSIO_MODE` | What the model sees | Who may use apps |
+|---|---|---|
+| `direct` | One tool per app action (`app_gmail_send_email`, ...) | By tool, per tier: a partner can read your calendar |
+| `router` | Composio's meta tools only: search, multi-execute, manage connections | Owner only |
+| unset | `router` when the model speaks an OpenAI-style chat completions API, `direct` otherwise | As above |
+
+OpenAI-style chat completions APIs reject a request with more than 128 tools
+(`Invalid 'tools': array too long`). The Maritime LLM proxy that `instinct deploy
+--maritime-llm` and the gateway's `INSTINCT_USE_MARITIME_LLM=1` use is one of them,
+and so is any `openai-compatible/<model>`. Direct Gmail plus Calendar alone is about a
+hundred tools, and the agent has a few dozen of its own, so on those models a direct
+session would make every reply fail. Left unset, the mode is chosen from the model;
+the boot log says which (`apps: composio router mode (...)`). Set `COMPOSIO_MODE=direct`
+only with a short toolkit list; the agent logs a warning at boot when the total
+passes 128 on such a model.
 
 ## Every app: COMPOSIO_TOOLKITS=all
 
@@ -219,6 +250,7 @@ yours alone.
 | `all` mode is owner-only | Without an allowlist the session holds only the meta tools, so every app call is `apps.use` + `trust.manage`. |
 | Money moves ask | An app action tagged `purchase` has no known amount, so the spend policy asks the owner first. |
 | Multi-execute cannot be checked per tool | `COMPOSIO_MULTI_EXECUTE_TOOL` runs several tools in one call. The guard sees one capability. The default `direct` session mode leaves this tool out and lists each app action on its own. |
+| 128 tools on OpenAI-style APIs | Chat completions APIs, the Maritime LLM proxy among them, cap a request at 128 tools. `COMPOSIO_MODE` defaults to `router` on those models. |
 | `router` mode is owner-only | In `router` mode the session holds only the meta tools, so every call costs `apps.use` + `trust.manage`. Choose it only for a toolkit list too large to list directly. |
 | Email and calendar content is data | The prompt tells the model that text inside an email or event is not an instruction. |
 | No tokens in chat | The model is told never to paste tokens, API keys or OAuth codes into a message. Links are fine. |
@@ -247,12 +279,3 @@ The reply comes back on iMessage.
 - [PERMISSIONS.md](PERMISSIONS.md): tiers, capabilities, grants
 - [PAYMENTS.md](PAYMENTS.md): the Stripe Link wallet, a separate rail from Composio
 - [`packages/apps/README.md`](../packages/apps/README.md): API and tests
-
-## When a toolkit has no auth config
-
-Composio opens a session only when every requested toolkit has an auth config in
-your project. A toolkit it does not manage auth for (Google Contacts, for one)
-answers `400 ... require auth configs but none exist`. Rather than losing every
-app, the agent drops that toolkit, logs `composio: no auth config for
-googlecontacts; continuing without it`, and opens the session with the rest. Add
-the auth config in the Composio dashboard and restart the agent to get it back.

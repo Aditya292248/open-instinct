@@ -24,6 +24,47 @@ export const ALL_TOOLKITS = "*";
  */
 export type ComposioSessionMode = "direct" | "router";
 
+/**
+ * OpenAI-style chat completions APIs reject a request that carries more tools than
+ * this ("Invalid 'tools': array too long"). The Maritime LLM proxy is one of them.
+ */
+export const OPENAI_COMPLETIONS_TOOL_LIMIT = 128;
+
+/**
+ * The session mode for this agent. `COMPOSIO_MODE=direct|router` wins. Unset, it is
+ * `router` for a model served through an OpenAI-style chat completions API (the
+ * Maritime LLM proxy among them), because direct Gmail plus Calendar alone lists
+ * about a hundred tools and the agent's own tools push the request past
+ * OPENAI_COMPLETIONS_TOOL_LIMIT, so every reply would fail. Any other model gets
+ * `direct`, which lets the guard tag each app action.
+ */
+export function composioModeFor(
+  env: { COMPOSIO_MODE?: string | undefined },
+  modelApi: string | undefined,
+): { mode: ComposioSessionMode; reason: string } {
+  const raw = env.COMPOSIO_MODE?.trim().toLowerCase();
+  if (raw === "direct" || raw === "router") return { mode: raw, reason: "COMPOSIO_MODE" };
+  const ignored = raw ? `COMPOSIO_MODE=${env.COMPOSIO_MODE?.trim()} is not direct or router; ` : "";
+  if (modelApi === "openai-completions") {
+    return { mode: "router", reason: `${ignored}the model's chat completions API accepts at most ${OPENAI_COMPLETIONS_TOOL_LIMIT} tools` };
+  }
+  return { mode: "direct", reason: `${ignored}default` };
+}
+
+/**
+ * Toolkits Composio refused because the project has no auth config for them. A
+ * project without, say, a Google Contacts auth config answers session create with a
+ * 400 ("... require auth configs but none exist") that names the toolkits. Only
+ * names from `requested` count, matched as whole words. Empty for any other error.
+ */
+export function toolkitsWithoutAuthConfig(err: unknown, requested: string[]): string[] {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status !== undefined && status !== 400) return [];
+  const text = errorText(err).toLowerCase();
+  if (!/auth[\s_-]*configs?\b/.test(text)) return [];
+  return requested.filter((slug) => new RegExp(`(^|[^a-z0-9_])${escapeRegExp(slug)}($|[^a-z0-9_])`).test(text));
+}
+
 export interface ComposioAppsOptions {
   apiKey: string;
   /** Composio user id. One per owner; the Maritime externalId or Inkbox handle works well. */
@@ -98,7 +139,7 @@ export class ComposioApps {
   private client?: McpToolSource;
   private connecting?: Promise<void>;
   private cachedTools?: RegisteredTool[];
-  /** Toolkits Composio refused at session creation (no auth config in the project). Dropped so the rest still work. */
+  /** Toolkits dropped this run because the Composio project has no auth config for them. */
   private readonly unavailable = new Set<string>();
 
   constructor(opts: ComposioAppsOptions) {
@@ -120,14 +161,14 @@ export class ComposioApps {
     return wantsAllToolkits(this.opts.toolkits);
   }
 
-  /** Normalized toolkit slugs, or `["*"]` in all mode. */
+  /** Normalized toolkit slugs, or `["*"]` in all mode. Leaves out toolkits Composio refused for lack of an auth config. */
   get toolkitSlugs(): string[] {
     return normalizeToolkits(this.opts.toolkits).filter((t) => !this.unavailable.has(t));
   }
 
-  /** Toolkits dropped because Composio has no auth config for them in this project. */
+  /** Configured toolkits left out of the session because the Composio project has no auth config for them. */
   get unavailableToolkits(): string[] {
-    return [...this.unavailable];
+    return [...this.unavailable].sort();
   }
 
   get sessionId(): string | undefined {
@@ -180,19 +221,7 @@ export class ComposioApps {
       // direct_tools lists each app tool so the guard sees GMAIL_SEND_EMAIL, not a generic executor.
       if (this.mode === "direct") config.sessionPreset = "direct_tools";
     }
-    let session: ComposioSessionLike;
-    try {
-      session = await this.composio.sessions.create(this.opts.userId, config);
-    } catch (err) {
-      // "The following toolkits require auth configs but none exist and cannot be auto-created: googlecontacts."
-      // One toolkit the project never set up must not take Gmail and Calendar down with it.
-      const missing = toolkitsWithoutAuthConfig(messageOf(err)).filter((t) => this.toolkitSlugs.includes(t));
-      if (missing.length === 0 || this.allToolkits) throw err;
-      for (const t of missing) this.unavailable.add(t);
-      this.log(`composio: no auth config for ${missing.join(", ")}; continuing without ${missing.length === 1 ? "it" : "them"}`);
-      if (this.toolkitSlugs.length === 0) throw err;
-      return this.openSession();
-    }
+    const session = await this.createSession(config);
     const state: AppsState = {
       sessionId: session.sessionId,
       userId: this.opts.userId,
@@ -203,6 +232,29 @@ export class ComposioApps {
     this.opts.state.writeJson(APPS_STATE_FILE, state);
     this.log(`composio: created session ${session.sessionId}${this.allToolkits ? " (all toolkits)" : ""}`);
     return session;
+  }
+
+  /**
+   * Create the session. When Composio refuses some toolkits for lack of an auth
+   * config, drop those and retry once, so one missing config (Google Contacts in a
+   * new project, typically) does not switch off every app. Any other error, or a
+   * refusal that names every toolkit, is thrown as before.
+   */
+  private async createSession(config: SessionCreateConfig): Promise<ComposioSessionLike> {
+    try {
+      return await this.composio.sessions.create(this.opts.userId, config);
+    } catch (err) {
+      const requested = config.toolkits ?? [];
+      const missing = toolkitsWithoutAuthConfig(err, requested);
+      const rest = requested.filter((t) => !missing.includes(t));
+      if (missing.length === 0 || rest.length === 0) throw err;
+      for (const t of missing) this.unavailable.add(t);
+      this.log(
+        `composio: this Composio project has no auth config for ${missing.join(", ")}; starting with ${rest.join(", ")} only. ` +
+          "Create the missing auth config in the Composio dashboard and restart the agent to add it.",
+      );
+      return await this.composio.sessions.create(this.opts.userId, { ...config, toolkits: rest });
+    }
   }
 
   /** Every MCP tool wrapped as a RegisteredTool. Cached after the first call. */
@@ -297,15 +349,26 @@ function sessionMatches(saved: AppsState, userId: string, toolkits: string[], mo
   return a.length === toolkits.length && a.every((t, i) => t === toolkits[i]);
 }
 
-/** Toolkit slugs named in Composio's "require auth configs but none exist" error, lower-cased. */
-export function toolkitsWithoutAuthConfig(message: string): string[] {
-  const m = /require auth configs?[^:]*:\s*([a-z0-9_,\s-]+?)(?:\.|\s+Please|$)/i.exec(message);
-  if (!m?.[1]) return [];
-  return m[1].split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
-}
-
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** The error message plus any response body the SDK attached (`APIError.error`). */
+function errorText(err: unknown): string {
+  const parts = [messageOf(err)];
+  const body = (err as { error?: unknown } | null)?.error;
+  if (body !== undefined) {
+    try {
+      parts.push(typeof body === "string" ? body : JSON.stringify(body));
+    } catch {
+      // An unserializable body adds nothing.
+    }
+  }
+  return parts.join(" ");
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function defaultCreateComposio(apiKey: string): ComposioClientLike {
