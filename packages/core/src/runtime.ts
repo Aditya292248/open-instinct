@@ -162,6 +162,8 @@ export class Conversation {
   replyRef: ReplyRef;
   /** Set when the model answered an A2A task itself during the current run. */
   repliedViaTool = false;
+  /** True while the current run was started by the owner's own direct message (see ToolContext.ownerTurn). */
+  ownerTurn = false;
   busy = false;
   private readonly sessionFile: string;
   private readonly refreshPrompt: () => string;
@@ -483,7 +485,11 @@ export class AgentRuntime {
     }
 
     const promptedBefore = approvals.promptedToken();
-    const run = conv.run(prompt).then(
+    // Only a run the owner started with their own words may settle an approval through a tool.
+    conv.ownerTurn = principal.kind === "owner" && !group && !msg.meta?.delegatedResult && APPROVAL_CHANNELS.has(msg.channel);
+    const run = conv.run(prompt).finally(() => {
+      conv.ownerTurn = false;
+    }).then(
       (reply) => ({ ok: true as const, reply }),
       (error: unknown) => ({ ok: false as const, error }),
     );
@@ -899,6 +905,7 @@ export class AgentRuntime {
         if (conv.replyRef.taskId) this.a2aStore.recordTask({ taskId: conv.replyRef.taskId, state });
       },
       channel: conv.channel,
+      get ownerTurn() { return conv.ownerTurn; },
       now: this.now,
     };
     const visible = (t: RegisteredTool) => t.spec.meta.capabilities.every((c) => policy.canEver(conv.principal, c));

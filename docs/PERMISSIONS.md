@@ -205,6 +205,12 @@ conversation continues with `followUp`.
   approving a partner's hotel.
 - Replies count only from carrier-bound or local channels: iMessage, SMS and `chat`. Never from email,
   A2A or a group thread.
+- An answer in the owner's own words ("tell him yes", "no, skip it") is settled by the model with the
+  owner-only `approval_settle` tool, under two limits enforced in code. It works only in a run that the
+  owner's own iMessage, SMS or `chat` message started: never in a turn begun by an email, a group
+  thread, another agent's reply, a scheduled job or a resumed task, since the owner did not write that
+  text. And it never settles an approval that moves money (`purchase`, `travel.book`, or any amount):
+  those wait for the owner's own plain yes or no, as above.
 - An approval is for one exact call: same conversation, same requester, same tool, same arguments
   (hashed), same amount within 5%. The model's retry of that call passes once, within 15 minutes.
   A different merchant, amount or title needs a new approval. An `ask_owner` question ("Did you get

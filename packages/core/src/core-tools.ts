@@ -13,6 +13,7 @@ import { pdfPageCount, renderMarkdownToPdf } from "./pdf.js";
 import { wrapUntrusted } from "./prompt.js";
 import type { Outbox } from "./runtime.js";
 import type { Scheduler } from "./scheduler.js";
+import { SPEND_CAPABILITIES } from "./policy.js";
 import { defineTool, textResult, type RegisteredTool, type ToolContext, type ToolResultLike } from "./tools.js";
 import type { Approval, AuditKind, InstinctConfig } from "./types.js";
 
@@ -241,11 +242,23 @@ function ownerTools({ approvals, config, outbox, audit, onApprovalSettled }: Cor
     meta: { capabilities: ["converse"], group: "owner", describe: (a) => `settle approval ${argText(a, "token") || "(only pending)"}: ${argText(a, "decision")}` },
     execute: async ({ decision, token }, ctx) => {
       if (ctx.principal.kind !== "owner") return { content: [{ type: "text", text: "Only the owner can settle an approval." }], isError: true };
+      // The owner's words have to be what started this run. An email, another agent's reply, a
+      // scheduled job or a resumed task runs as the owner too, but its text is not theirs.
+      if (!ctx.ownerTurn) {
+        return {
+          content: [{ type: "text", text: "Only the owner's own message can settle an approval, and this turn did not start with one. Ask the owner and let them answer." }],
+          isError: true,
+        };
+      }
       const pending = approvals.pending();
       if (pending.length === 0) return textResult("Nothing is pending.");
       const wanted = token?.trim().toUpperCase();
       const target = wanted ? pending.find((a) => a.token === wanted) : pending.length === 1 ? pending[0] : undefined;
       if (!target) return textResult(`Which one? Pending: ${pending.map((a) => `${a.token}: ${a.summary}`).join("; ")}. Call again with the token.`);
+      // Money moves only on the owner's own plain yes, never on the model's reading of their words.
+      if (SPEND_CAPABILITIES.has(target.capability) || target.amountUsd !== undefined) {
+        return textResult(`${target.summary} involves money, so only the owner's own yes settles it. Ask whether they want to go ahead; a plain yes or no from them is handled automatically.`);
+      }
       const approved = decision === "yes";
       const resolved = approvals.resolve(target.token, approved);
       if (!resolved) return textResult("That approval is no longer pending.");

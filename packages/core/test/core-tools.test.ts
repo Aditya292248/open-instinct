@@ -39,11 +39,11 @@ function setup(opts: { fetchImpl?: typeof fetch; searchApiKey?: string; lookup?:
   };
   const registry = new ToolRegistry();
   registry.registerMany(coreTools(deps));
-  const ctxFor = (principal: Principal): ToolContext => ({ principal, conversationKey: "imessage:t", channel: "imessage", now: () => NOW });
-  const run = async (name: string, args: unknown, principal: Principal = principalOf("owner")) => {
+  const ctxFor = (principal: Principal, ownerTurn: boolean): ToolContext => ({ principal, conversationKey: "imessage:t", channel: "imessage", ownerTurn, now: () => NOW });
+  const run = async (name: string, args: unknown, principal: Principal = principalOf("owner"), ownerTurn = principal.kind === "owner") => {
     const tool = registry.get(name);
     if (!tool) throw new Error(`no tool ${name}`);
-    return tool.spec.execute(args, ctxFor(principal));
+    return tool.spec.execute(args, ctxFor(principal, ownerTurn));
   };
   const text = (r: Awaited<ReturnType<typeof run>>) => (typeof r === "string" ? r : r.content.map((c) => (c.type === "text" ? c.text : "")).join(""));
   return { deps, registry, run, text, sent, state };
@@ -92,6 +92,28 @@ describe("approval_settle", () => {
     expect(settled).toEqual([{ token: a.token, approved: true }]);
     expect(deps.audit.read({ kinds: ["approval"] }).some((e) => e.detail["via"] === "approval_settle")).toBe(true);
     expect(text(await run("approval_settle", { decision: "no", token: a.token }))).toMatch(/Nothing is pending|no longer pending/);
+  });
+
+  it("refuses when the run did not start with the owner's own message", async () => {
+    const { run, text, deps } = setup();
+    const a = deps.approvals.create({ conversationKey: "a2a:1", requestedBy: "agent:x", summary: "intro with X", capability: "owner.relay" });
+    // An email, another agent's reply or a scheduled job runs as the owner but is not their words.
+    const r = await run("approval_settle", { decision: "yes" }, principalOf("owner"), false);
+    expect(typeof r === "string" ? false : r.isError).toBe(true);
+    expect(text(r)).toContain("Only the owner's own message can settle an approval");
+    expect(deps.approvals.get(a.token)?.status).toBe("pending");
+  });
+
+  it("never settles an approval that moves money", async () => {
+    const settled: string[] = [];
+    const { run, text, deps } = setup({ onApprovalSettled: async (a) => void settled.push(a.token) });
+    const buy = deps.approvals.create({ conversationKey: "imessage:t", requestedBy: "owner", summary: "buy the concert tickets", capability: "purchase", amountUsd: 180 });
+    expect(text(await run("approval_settle", { decision: "yes" }))).toContain("involves money");
+    const flight = deps.approvals.create({ conversationKey: "imessage:t", requestedBy: "partner:sam", summary: "book the Lisbon flight", capability: "travel.book" });
+    expect(text(await run("approval_settle", { decision: "yes", token: flight.token }))).toContain("involves money");
+    expect(deps.approvals.get(buy.token)?.status).toBe("pending");
+    expect(deps.approvals.get(flight.token)?.status).toBe("pending");
+    expect(settled).toEqual([]);
   });
 
   it("asks which one when several are pending and no token is given", async () => {

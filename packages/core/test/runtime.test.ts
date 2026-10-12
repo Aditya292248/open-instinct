@@ -31,6 +31,8 @@ interface Harness {
   sent: Sent[];
   deps: RuntimeDeps;
   calls: Array<{ tool: string; args: unknown }>;
+  /** ctx.ownerTurn as each echo call saw it. */
+  ownerTurns: Array<boolean | undefined>;
   gate: { open: () => void; promise: Promise<void> };
 }
 
@@ -68,6 +70,7 @@ function harness(opts: HarnessOptions = {}): Harness {
   const memory = new MemoryStore(state);
   const registry = new ToolRegistry();
   const calls: Array<{ tool: string; args: unknown }> = [];
+  const ownerTurns: Array<boolean | undefined> = [];
   const gate = makeGate();
 
   registry.registerMany([
@@ -77,8 +80,9 @@ function harness(opts: HarnessOptions = {}): Harness {
       description: "echo",
       parameters: Type.Object({ text: Type.String() }),
       meta: { capabilities: ["converse"], group: "system" },
-      execute: async ({ text }) => {
+      execute: async ({ text }, ctx) => {
         calls.push({ tool: "echo", args: { text } });
+        ownerTurns.push(ctx.ownerTurn);
         return textResult(`echo:${text}`);
       },
     }),
@@ -161,7 +165,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     replyBudgetMs: opts.replyBudgetMs ?? 5_000,
     ...(opts.deps ?? {}),
   };
-  return { runtime: new AgentRuntime(deps), faux, sent, deps, calls, gate };
+  return { runtime: new AgentRuntime(deps), faux, sent, deps, calls, ownerTurns, gate };
 }
 
 const replyInstinctTool = defineTool({
@@ -1089,6 +1093,28 @@ describe("afterApproval", () => {
     await h.runtime.afterApproval({ ...approval, status: "approved" }, true);
     expect(h.sent.length).toBeGreaterThan(sentBefore);
     expect(h.sent.at(-1)?.msg).toMatchObject({ channel: "a2a", text: "Great, Maria is in. Lunch at 12:30?" });
+  });
+});
+
+describe("ownerTurn", () => {
+  it("is true only while a run started by the owner's own iMessage, SMS or chat message is going", async () => {
+    const h = harness();
+    const echoThenDone = () => h.faux.setResponses([toolTurn("echo", { text: "x" }), textTurn("done")]);
+
+    echoThenDone();
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:o1", text: "tell him yes" }));
+    echoThenDone();
+    await h.runtime.handleInbound(inbound({ channel: "chat", from: "owner", conversationKey: "chat:cli", text: "go ahead" }));
+    // The owner's email address is not proof, and a stranger is not the owner.
+    echoThenDone();
+    await h.runtime.handleInbound(inbound({ channel: "email", from: "maria@example.com", conversationKey: "email:o1", text: "Subject: yes\n\ngo ahead" }));
+    echoThenDone();
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: "+15550009999", conversationKey: "imessage:s1", text: "approve it" }));
+    // A scheduled job runs as the owner, but the owner did not write its prompt.
+    echoThenDone();
+    await h.runtime.runScheduled({ id: "brief", enabled: true, prompt: "morning brief", createdAt: new Date().toISOString() });
+
+    expect(h.ownerTurns).toEqual([true, true, false, false, false]);
   });
 });
 
