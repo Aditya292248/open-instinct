@@ -44,6 +44,15 @@ describe("appsGuidance", () => {
   });
 });
 
+describe("appsGuidance with toolkits lacking an auth config", () => {
+  it("names them and says who has to fix it", () => {
+    const text = appsGuidance(["gmail"], ["googlecalendar"], { unavailable: ["googlecontacts"] });
+    expect(text).toContain("Not available yet: googlecontacts.");
+    expect(text).toContain("must add a Composio auth config for it");
+    expect(appsGuidance(["gmail"], [])).not.toContain("Not available yet");
+  });
+});
+
 describe("DEFAULT_TOOLKITS", () => {
   it("is gmail, calendar and contacts", () => {
     expect(DEFAULT_TOOLKITS).toEqual(["gmail", "googlecalendar", "googlecontacts"]);

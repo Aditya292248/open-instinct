@@ -23,6 +23,8 @@ export interface GatewayEnv {
   anthropicApiKey?: string;
   composioApiKey?: string;
   composioToolkits?: string;
+  /** COMPOSIO_MODE forwarded to each agent: direct or router. Unset lets the agent choose from its model. */
+  composioMode?: string;
   contextDevApiKey?: string;
   /** AMPLE_SIGNUP=1: each person's agent signs up for an Ample account of its own on its first deploy. */
   ampleSignup: boolean;
@@ -68,6 +70,7 @@ export function readEnv(env: NodeJS.ProcessEnv): GatewayEnv {
     anthropicApiKey: env["ANTHROPIC_API_KEY"] || undefined,
     composioApiKey: env["COMPOSIO_API_KEY"] || undefined,
     composioToolkits: env["COMPOSIO_TOOLKITS"] || env["INSTINCT_COMPOSIO_TOOLKITS"] || undefined,
+    composioMode: env["COMPOSIO_MODE"]?.trim() || undefined,
     contextDevApiKey: env["CONTEXT_DEV_API_KEY"] || undefined,
     ampleSignup: truthy(env["AMPLE_SIGNUP"]),
     ampleSharedCredential: Boolean(env["AMPLE_CLIENT_ID"] || env["AMPLE_CLIENT_SECRET"] || env["AMPLE_TOKEN"]),
@@ -96,8 +99,9 @@ export function checkSignupPolicy(cfg: Pick<GatewayEnv, "inkboxAdminApiKey" | "s
 }
 
 /** Settings every agent gets. Only keys safe to share across people belong here. */
-export function agentExtraEnv(cfg: Pick<GatewayEnv, "contextDevApiKey" | "ampleSignup">): Record<string, string> | undefined {
+export function agentExtraEnv(cfg: Pick<GatewayEnv, "contextDevApiKey" | "ampleSignup" | "composioMode">): Record<string, string> | undefined {
   const env: Record<string, string> = {};
+  if (cfg.composioMode) env["COMPOSIO_MODE"] = cfg.composioMode;
   if (cfg.contextDevApiKey) env["CONTEXT_DEV_API_KEY"] = cfg.contextDevApiKey;
   if (cfg.ampleSignup) env["AMPLE_SIGNUP"] = "1";
   return Object.keys(env).length > 0 ? env : undefined;

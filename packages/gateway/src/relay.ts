@@ -20,6 +20,14 @@ export interface RelayDeps {
   retry?: { attempts?: number; backoffMs?: number[]; sleep?: (ms: number) => Promise<void> };
   /** Request timeout for the Maritime chat call. Maritime waits up to 30 s for the agent. */
   timeoutMs?: number;
+  /**
+   * Ask Maritime for the agent's state before each /chat. Default: only for agents created
+   * within `agentReadyWindowMs`, the window in which a /chat is accepted but lost because
+   * the VM is still being built. `true` checks always, `false` never.
+   */
+  checkAgentStatus?: boolean;
+  /** Default 15 minutes. */
+  agentReadyWindowMs?: number;
 }
 
 /** Insertion-ordered set with a cap. Oldest ids fall off first. */
@@ -116,6 +124,40 @@ export async function relayEvent(user: UserRecord, rawBody: Buffer, headers: Hea
 }
 
 /** Replay an event whose signature was verified before durable admission. */
+/** Maritime agent states in which /chat is accepted but nothing reaches the agent. */
+const AGENT_NOT_READY = new Set(["building", "deploying", "starting", "creating", "pending", "queued", "provisioning", "updating", "restarting"]);
+
+/**
+ * A /chat sent while the VM is still being built is accepted with a 200 and lost: the
+ * first message after signup lands in that window (the connect page even invites it).
+ * Ask Maritime for the agent's state first and report "not ready" so the caller's retry
+ * (the durable inbox) delivers it later. An unreadable status does not block the send.
+ */
+export async function agentNotReadyReason(user: Pick<UserRecord, "maritimeAgentId" | "createdAt">, deps: RelayDeps): Promise<string | undefined> {
+  const agentId = user.maritimeAgentId;
+  if (!agentId || deps.checkAgentStatus === false) return undefined;
+  if (deps.checkAgentStatus !== true) {
+    const age = Date.now() - Date.parse(user.createdAt);
+    if (Number.isFinite(age) && age > (deps.agentReadyWindowMs ?? 15 * 60_000)) return undefined;
+  }
+  const f = deps.fetchImpl ?? globalThis.fetch;
+  const base = (deps.maritime.baseUrl ?? DEFAULT_MARITIME_BASE_URL).replace(/\/+$/, "");
+  try {
+    const res = await f(`${base}/api/agents/${encodeURIComponent(agentId)}`, {
+      headers: { Authorization: `Bearer ${deps.maritime.apiKey}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(deps.timeoutMs ?? 60_000),
+    });
+    if (!res.ok) return undefined;
+    const agent = safeJson(await res.text());
+    const status = typeof agent?.["status"] === "string" ? (agent["status"] as string).toLowerCase() : "";
+    if (AGENT_NOT_READY.has(status)) return `agent ${status}`;
+    if (status === "error") return "agent in error";
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function relayVerifiedEvent(user: UserRecord, payload: Json, deps: RelayDeps): Promise<RelayResult> {
   const log = deps.logger ?? silentLogger;
   const eventType = typeof payload["event_type"] === "string" ? payload["event_type"] : "";
@@ -131,6 +173,12 @@ export async function relayVerifiedEvent(user: UserRecord, payload: Json, deps: 
   }
 
   const body = { message: encodeEvent(payload), conversation_id: conversationIdOf(payload) };
+  const notReady = await agentNotReadyReason(user, deps);
+  if (notReady) {
+    if (eventId) dedupe.forget(eventId);
+    log.warn("relay.agent_not_ready", { userId: user.id, reason: notReady });
+    return { status: "rejected", reason: notReady };
+  }
   const result = await postChat(user.maritimeAgentId, body, deps);
   if (result.status !== "forwarded" && eventId) dedupe.forget(eventId);
   log.info("relay.result", { userId: user.id, eventType, ...result });
@@ -144,6 +192,11 @@ export async function relayVerifiedEvent(user: UserRecord, payload: Json, deps: 
 export async function relayGatewayEvent(user: UserRecord, event: Record<string, unknown>, conversationId: string, deps: RelayDeps): Promise<RelayResult> {
   const log = deps.logger ?? silentLogger;
   if (!user.maritimeAgentId) return { status: "ignored", reason: "agent not provisioned" };
+  const notReady = await agentNotReadyReason(user, deps);
+  if (notReady) {
+    log.warn("relay.agent_not_ready", { userId: user.id, eventType: String(event["type"] ?? "gateway"), reason: notReady });
+    return { status: "rejected", reason: notReady };
+  }
   const result = await postChat(user.maritimeAgentId, { message: encodeEvent(event), conversation_id: conversationId }, deps);
   log.info("relay.result", { userId: user.id, eventType: String(event["type"] ?? "gateway"), ...result });
   return result;
@@ -171,8 +224,11 @@ async function postChat(agentId: string, body: { message: string; conversation_i
         const text = await res.text();
         const parsed = safeJson(text);
         const err = parsed && typeof parsed["error"] === "string" ? parsed["error"] : undefined;
-        if (!err) return { status: "forwarded" };
-        lastReason = `maritime: ${err}`;
+        // A delivered /chat carries the agent's answer as a string (often "" or a JSON ack). A null or
+        // missing response with no error is Maritime accepting a message it could not hand over.
+        if (!err && parsed && typeof parsed["response"] === "string") return { status: "forwarded" };
+        if (!err && !parsed) return { status: "forwarded" };
+        lastReason = err ? `maritime: ${err}` : "maritime: accepted without a response (agent not running?)";
       } else if (RETRY_STATUSES.has(res.status)) {
         lastReason = `maritime ${res.status}`;
       } else {
