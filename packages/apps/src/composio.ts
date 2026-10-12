@@ -128,8 +128,9 @@ export interface SessionCreateConfig {
 }
 
 /** Pages of connected toolkits fetched in all mode before giving up. */
-const MAX_CONNECTED_PAGES = 10;
-const CONNECTED_PAGE_SIZE = 100;
+const MAX_CONNECTED_PAGES = 20;
+/** Composio's connected-accounts endpoint rejects a limit above 50 with a 400. */
+const CONNECTED_PAGE_SIZE = 50;
 
 export class ComposioApps {
   private readonly opts: ComposioAppsOptions;

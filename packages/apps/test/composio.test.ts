@@ -230,6 +230,9 @@ describe("toolkitsWithoutAuthConfig", () => {
 
   it("returns the requested toolkits the error names, as whole words", () => {
     expect(toolkitsWithoutAuthConfig(noContactsConfig(), requested)).toEqual(["googlecontacts"]);
+    // The exact text a live Composio project returned.
+    const live = Object.assign(new Error("400 The following toolkits require auth configs but none exist and cannot be auto-created: googlecontacts."), { status: 400 });
+    expect(toolkitsWithoutAuthConfig(live, requested)).toEqual(["googlecontacts"]);
     // The SDK may put the server text in the message or only in the attached body.
     const bodyOnly = Object.assign(new Error("400 status code (no body)"), { status: 400, error: { detail: "auth configs missing for toolkits: [googlecontacts, gmail]" } });
     expect(toolkitsWithoutAuthConfig(bodyOnly, requested)).toEqual(["gmail", "googlecontacts"]);
@@ -322,8 +325,8 @@ describe("ComposioApps in all-toolkits mode", () => {
       { slug: "slack", connected: true },
     ]);
     expect(calls).toEqual([
-      { isConnected: true, limit: 100 },
-      { isConnected: true, limit: 100, cursor: "p2" },
+      { isConnected: true, limit: 50 },
+      { isConnected: true, limit: 50, cursor: "p2" },
     ]);
   });
 
@@ -333,7 +336,7 @@ describe("ComposioApps in all-toolkits mode", () => {
     const state = fakeState({ [APPS_STATE_FILE]: { sessionId: "s", userId: "maria", toolkits: ["*"], mode: "router", createdAt: "x" } });
     const apps = new ComposioApps({ ...base, toolkits: ["all"], state, adapters: { createComposio: () => composio.client, connectMcp: fakeMcp().connectMcp } });
     expect(await apps.connectedToolkits()).toEqual([{ slug: "gmail", connected: true }]);
-    expect(toolkits).toHaveBeenCalledTimes(10);
+    expect(toolkits).toHaveBeenCalledTimes(20);
   });
 
   it("still hands out connect links for any toolkit", async () => {
