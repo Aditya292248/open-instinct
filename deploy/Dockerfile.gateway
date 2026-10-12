@@ -11,6 +11,8 @@ WORKDIR /app
 
 FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json ./
+# pnpm applies patchedDependencies during install, so the patch files must be present first.
+COPY patches ./patches
 COPY packages/core/package.json packages/core/
 COPY packages/inkbox/package.json packages/inkbox/
 COPY packages/computer/package.json packages/computer/
