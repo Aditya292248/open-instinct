@@ -1084,6 +1084,16 @@ describe("sessions", () => {
   });
 });
 
+describe("shortReason", () => {
+  it("keeps a human reason and drops JSON bodies and status prefixes", async () => {
+    const { shortReason } = await import("../src/runtime.js");
+    expect(shortReason("rate limited by the provider")).toBe("rate limited by the provider");
+    expect(shortReason('400: {"message":"Invalid tools: array too long"}')).toBe("");
+    expect(shortReason("503 upstream unavailable\nmore detail")).toBe("upstream unavailable");
+    expect(shortReason("x".repeat(100))).toHaveLength(80);
+  });
+});
+
 describe("restoreMessages", () => {
   const user = (i: number): AgentMessage => ({ role: "user", content: [{ type: "text", text: `question ${i}` }], timestamp: i });
   const assistant = (i: number): AgentMessage => ({ role: "assistant", content: [{ type: "text", text: `answer ${i}` }], api: "faux", provider: "faux", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: i });
@@ -1184,12 +1194,3 @@ describe("runScheduled", () => {
   });
 });
 
-describe("shortReason", () => {
-  it("keeps a human reason and drops JSON bodies and status prefixes", async () => {
-    const { shortReason } = await import("../src/runtime.js");
-    expect(shortReason("rate limited by the provider")).toBe("rate limited by the provider");
-    expect(shortReason('400: {"message":"Invalid tools: array too long"}')).toBe("");
-    expect(shortReason("503 upstream unavailable\nmore detail")).toBe("upstream unavailable");
-    expect(shortReason("x".repeat(100))).toHaveLength(80);
-  });
-});
