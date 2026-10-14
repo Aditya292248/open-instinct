@@ -21,6 +21,7 @@ import {
   coreTools,
   ensurePersona,
   loadConfig,
+  syncInstructions,
   loadPolicy,
   resolveDataDir,
   resolveModel,
@@ -85,6 +86,10 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   const config = loadConfig(state, env);
   // PERSONA.md is the owner's file; INSTINCT_PERSONA seeds it on first boot only.
   if (ensurePersona(state, env.INSTINCT_PERSONA)) log(`wrote ${state.path("PERSONA.md")}${env.INSTINCT_PERSONA?.trim() ? " from INSTINCT_PERSONA" : " (default persona)"}`);
+  // AGENTS.md is the owner's standing-instructions file. INSTINCT_INSTRUCTIONS seeds it, and a changed seed
+  // replaces it as long as the owner never edited the file; an edited file is theirs.
+  const instructions = syncInstructions(state, env.INSTINCT_INSTRUCTIONS);
+  if (instructions === "created" || instructions === "updated") log(`${instructions} ${state.path("AGENTS.md")} from INSTINCT_INSTRUCTIONS`);
 
   const audit = new AuditLog(state);
   const policy = new PolicyEngine(loadPolicy(state), {

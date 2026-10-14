@@ -297,6 +297,7 @@ Server:
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, ... | model access, looked up per Pi provider |
 | `INSTINCT_OWNER_NAME`, `INSTINCT_OWNER_PHONE`, `INSTINCT_OWNER_EMAIL`, `INSTINCT_OWNER_TIMEZONE`, `INSTINCT_AGENT_NAME` | who the owner is and what the agent is called; seeded into `config.json` on first boot |
 | `INSTINCT_PERSONA` | seeds `<data>/PERSONA.md` on first boot only; after that the file is the owner's (`instinct persona`) |
+| `INSTINCT_INSTRUCTIONS` | seeds `<data>/AGENTS.md`; a changed value replaces the file on the next boot unless the owner edited it (`AGENTS.md.seed` remembers the last seed) |
 | `INKBOX_API_KEY`, `INKBOX_AGENT_HANDLE`, `INKBOX_IDENTITY_ID` | identity-scoped Inkbox credentials; turn on the Inkbox outbox, messaging tools and A2A |
 | `INKBOX_SIGNING_KEY` | webhook signing key (also read from `secrets/webhook.json`) |
 | `INKBOX_ADMIN_API_KEY` | org-wide key: invitations, contact rules, webhook subscription with the tunnel |
