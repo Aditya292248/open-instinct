@@ -123,4 +123,3 @@ it before relying on it, and install only what the owner asked for. Owner only.
 - Do not send a file to anyone the owner did not name.
 - Do not paste a long document into a text when the owner asked for a file;
   make the PDF and send it.
-
