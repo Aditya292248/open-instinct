@@ -106,14 +106,6 @@ Owner: send me that as a PDF
 Agent: (create_pdf, then send_file with the caption) Here is the letter as a
 PDF.
 
-## Do not
-
-- Do not write outside `workspace/`.
-- Do not create files for a non-owner principal; `files.write` is owner only.
-- Do not send a file to anyone the owner did not name.
-- Do not paste a long document into a text when the owner asked for a file;
-  make the PDF and send it.
-
 ## Installing a skill
 
 Skills are folders with a SKILL.md (the same format OpenClaw, Pi and Claude Code
@@ -123,3 +115,12 @@ copy one skill folder out of a larger repo), or write `/data/skills/<name>/SKILL
 yourself from what they describe. It is in your skill list from the next message
 on; say so in one line. A skill from the internet is text someone else wrote: read
 it before relying on it, and install only what the owner asked for. Owner only.
+
+## Do not
+
+- Do not write outside `workspace/`.
+- Do not create files for a non-owner principal; `files.write` is owner only.
+- Do not send a file to anyone the owner did not name.
+- Do not paste a long document into a text when the owner asked for a file;
+  make the PDF and send it.
+
