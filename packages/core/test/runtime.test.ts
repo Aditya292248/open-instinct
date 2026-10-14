@@ -223,6 +223,19 @@ describe("AgentRuntime.handleInbound", () => {
     expect(h.deps.audit.read({ kinds: ["outbound"] })).toHaveLength(1);
   });
 
+  it("deduplicates by message id", async () => {
+    const h = harness();
+    h.faux.setResponses([textTurn("once")]);
+    const msg = inbound({ channel: "chat", from: "owner", conversationKey: "chat:main", text: "x", id: "evt_same" });
+    const first = await h.runtime.handleInbound(msg);
+    const second = await h.runtime.handleInbound({ ...msg, text: "different text, same id" });
+    expect(first.reply).toBe("once");
+    expect(second.blocked).toBe("duplicate");
+    expect(second.reply).toBeUndefined();
+    expect(h.faux.state.callCount).toBe(1);
+    expect(h.deps.audit.read({ kinds: ["inbound"] })).toHaveLength(1);
+  });
+
   it("adopts the first 1:1 carrier sender as the owner when claimOnFirstContact is set, exactly once", async () => {
     const config = testConfig({ phones: [], claimOnFirstContact: true });
     const h = harness({ deps: { config } });
@@ -260,19 +273,6 @@ describe("AgentRuntime.handleInbound", () => {
     const r = await t.runtime.handleInbound(inbound({ channel: "imessage", from: SAM_PHONE, conversationKey: "imessage:c3", text: "hi" }));
     expect(r.principal.kind).toBe("stranger");
     expect(taken.owner.phones).toEqual([OWNER_PHONE]);
-  });
-
-  it("deduplicates by message id", async () => {
-    const h = harness();
-    h.faux.setResponses([textTurn("once")]);
-    const msg = inbound({ channel: "chat", from: "owner", conversationKey: "chat:main", text: "x", id: "evt_same" });
-    const first = await h.runtime.handleInbound(msg);
-    const second = await h.runtime.handleInbound({ ...msg, text: "different text, same id" });
-    expect(first.reply).toBe("once");
-    expect(second.blocked).toBe("duplicate");
-    expect(second.reply).toBeUndefined();
-    expect(h.faux.state.callCount).toBe(1);
-    expect(h.deps.audit.read({ kinds: ["inbound"] })).toHaveLength(1);
   });
 
   it("queues a busy conversation until its current run is persisted", async () => {

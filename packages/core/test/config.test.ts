@@ -41,16 +41,6 @@ describe("config", () => {
     expect(loadConfig(tempState(), { INSTINCT_TIMEZONE: "Europe/Berlin", INSTINCT_OWNER_TIMEZONE: "Asia/Tokyo" }).owner.timezone).toBe("Asia/Tokyo");
   });
 
-  it("seeds owner.claimOnFirstContact from INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT only when set", () => {
-    const off = loadConfig(tempState(), { INSTINCT_OWNER_NAME: "Maria" });
-    expect(off.owner.claimOnFirstContact).toBeUndefined();
-    const on = loadConfig(tempState(), { INSTINCT_OWNER_NAME: "Maria", INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT: "1" });
-    expect(on.owner.phones).toEqual([]);
-    expect(on.owner.claimOnFirstContact).toBe(true);
-    const no = loadConfig(tempState(), { INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT: "0" });
-    expect(no.owner.claimOnFirstContact).toBeUndefined();
-  });
-
   it("prefers the file over env on later loads, except INSTINCT_MODEL", () => {
     const state = tempState();
     loadConfig(state, { INSTINCT_OWNER_NAME: "Maria", INSTINCT_OWNER_PHONE: "+16175550100" });
@@ -62,6 +52,16 @@ describe("config", () => {
     expect(swapped.model.primary).toBe("openai-compatible/gpt-5");
     // The override is per process; the file keeps what was saved.
     expect(state.readJson<{ model: { primary: string } }>("config.json", { model: { primary: "" } }).model.primary).toBe(DEFAULT_MODEL);
+  });
+
+  it("seeds owner.claimOnFirstContact from INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT only when set", () => {
+    const off = loadConfig(tempState(), { INSTINCT_OWNER_NAME: "Maria" });
+    expect(off.owner.claimOnFirstContact).toBeUndefined();
+    const on = loadConfig(tempState(), { INSTINCT_OWNER_NAME: "Maria", INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT: "1" });
+    expect(on.owner.phones).toEqual([]);
+    expect(on.owner.claimOnFirstContact).toBe(true);
+    const no = loadConfig(tempState(), { INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT: "0" });
+    expect(no.owner.claimOnFirstContact).toBeUndefined();
   });
 
   it("ignores an invalid computer mode and fills gaps in a hand-edited file", () => {
