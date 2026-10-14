@@ -149,6 +149,7 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       config,
       outbox,
       workspaceDir: state.path("workspace"),
+      onApprovalSettled: (approval, approved) => runtime.afterApproval(approval, approved),
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       ...(env.BRAVE_SEARCH_API_KEY ? { searchApiKey: env.BRAVE_SEARCH_API_KEY } : {}),
     }),
@@ -319,7 +320,9 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   if (skillList.length > 0) registry.register(loadSkillTool(skillList));
   const skillsPrompt = promptSections.length > 0 ? promptSections.join("\n\n") : undefined;
 
-  const runtime = new AgentRuntime({
+  // eslint-disable-next-line prefer-const
+  let runtime: AgentRuntime;
+  runtime = new AgentRuntime({
     state,
     config,
     policy,

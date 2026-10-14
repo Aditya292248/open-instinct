@@ -87,13 +87,14 @@ describe("PolicyEngine.evaluate across tiers", () => {
     expect(d.reason).toMatch(/in part/);
   });
 
-  it("returns an approval prompt that names the asker and ends with YES or NO", () => {
+  it("returns an approval prompt that names the asker and reads like a question, with no token or YES/NO protocol", () => {
     const d = engine.evaluate(principalOf("partner"), meta(["calendar.write"], { describe: () => "Add dinner Thu 7pm" }), {});
     expect(d.outcome).toBe("ask");
     if (d.outcome !== "ask") return;
     expect(d.approvalPrompt).toContain("partner person");
     expect(d.approvalPrompt).toContain("Add dinner Thu 7pm");
-    expect(d.approvalPrompt).toMatch(/YES or NO/);
+    expect(d.approvalPrompt).toMatch(/\?$/);
+    expect(d.approvalPrompt).not.toMatch(/YES or NO|[Tt]oken/);
   });
 
   it("requires every capability: deny beats ask beats allow", () => {
