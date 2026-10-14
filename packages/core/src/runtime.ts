@@ -517,6 +517,29 @@ export class AgentRuntime {
     await this.sendToOwner(text, principal, key);
   }
 
+  /**
+   * A task the operator asked for (a `system.task` envelope): runs as the owner in
+   * its own conversation. The result goes to the owner's phone unless the task is
+   * quiet, in which case only its side effects (memory, schedules) remain. Like a
+   * scheduled job, the owner did not write the prompt, so ownerTurn stays false and
+   * approval_settle is refused inside it.
+   */
+  async runSystemTask(task: { id: string; name?: string; prompt: string; quiet?: boolean }): Promise<string> {
+    const principal = this.ownerPrincipal();
+    const key = `system:${task.id}`;
+    const conv = this.conversation(key, principal);
+    this.deps.audit.append({ kind: "schedule", conversationKey: key, principal: principal.id, detail: { systemTask: task.id, name: task.name, quiet: task.quiet === true } });
+    let text = "";
+    try {
+      text = await conv.run(task.prompt);
+    } catch (error) {
+      this.auditError(key, principal, error);
+      throw error;
+    }
+    if (!task.quiet && text.trim()) await this.sendToOwner(text, principal, key);
+    return text;
+  }
+
   // -------------------------------------------------------------------------
   // Policy guard and audit
   // -------------------------------------------------------------------------

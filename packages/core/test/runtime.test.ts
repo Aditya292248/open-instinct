@@ -1151,3 +1151,37 @@ describe("runScheduled", () => {
     expect(h.sent).toHaveLength(0);
   });
 });
+
+describe("runSystemTask", () => {
+  it("runs as the owner on system:<id>, texts the result unless quiet, and audits", async () => {
+    const h = harness();
+    h.faux.setResponses([textTurn("Profile saved."), textTurn("Reminder: the keynote is at 9.")]);
+    const quiet = await h.runtime.runSystemTask({ id: "conference-prepare", name: "Prepare", prompt: "Research the owner and save a profile.", quiet: true });
+    expect(quiet).toBe("Profile saved.");
+    expect(h.sent).toHaveLength(0);
+    const loud = await h.runtime.runSystemTask({ id: "keynote-reminder", prompt: "Remind the owner about the keynote." });
+    expect(loud).toBe("Reminder: the keynote is at 9.");
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]!.msg).toMatchObject({ channel: "imessage", to: OWNER_PHONE, text: "Reminder: the keynote is at 9." });
+    expect(h.sent[0]!.ctx.conversationKey).toBe("system:keynote-reminder");
+    expect(h.sent[0]!.ctx.principal.kind).toBe("owner");
+    const audits = h.deps.audit.read({ kinds: ["schedule"] });
+    expect(audits.map((a) => a.detail["systemTask"])).toEqual(["conference-prepare", "keynote-reminder"]);
+    expect(audits[0]!.detail["quiet"]).toBe(true);
+  });
+
+  it("is not an owner turn: a tool inside it sees ownerTurn false", async () => {
+    const h = harness();
+    h.faux.setResponses([toolTurn("echo", { text: "x" }), textTurn("done")]);
+    await h.runtime.runSystemTask({ id: "t1", prompt: "do it", quiet: true });
+    expect(h.ownerTurns).toEqual([false]);
+  });
+
+  it("surfaces a failed run to the caller and audits it", async () => {
+    const h = harness();
+    h.faux.setResponses([]);
+    await expect(h.runtime.runSystemTask({ id: "boom", prompt: "fail" })).rejects.toThrow();
+    expect(h.deps.audit.read({ kinds: ["error"] }).length).toBeGreaterThan(0);
+    expect(h.sent).toHaveLength(0);
+  });
+});
