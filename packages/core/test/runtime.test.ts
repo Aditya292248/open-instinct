@@ -223,6 +223,38 @@ describe("AgentRuntime.handleInbound", () => {
     expect(h.deps.audit.read({ kinds: ["outbound"] })).toHaveLength(1);
   });
 
+  it("texts a one-line ack into an iMessage thread when the reply passes the budget and ackSlowReplies is on", async () => {
+    const config = testConfig();
+    config.features.ackSlowReplies = true;
+    const h = harness({ replyBudgetMs: 25, deps: { config } });
+    h.faux.setResponses([toolTurn("slow", {}), textTurn("Here is the slow result")]);
+    const result = await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "research this" }));
+    expect(result.reply).toBe("On it. I will text you when it is done.");
+    await vi.waitFor(() => expect(h.sent).toHaveLength(1));
+    expect(h.sent[0]!.msg).toMatchObject({ channel: "imessage", conversationKey: "imessage:c1", text: "On it. I will text you when it is done." });
+    h.gate.open();
+    await vi.waitFor(() => expect(h.sent).toHaveLength(2));
+    expect(h.sent[1]!.msg.text).toBe("Here is the slow result");
+
+    // Off by default.
+    const quiet = harness({ replyBudgetMs: 25 });
+    quiet.faux.setResponses([toolTurn("slow", {}), textTurn("done")]);
+    await quiet.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c2", text: "slow" }));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(quiet.sent).toHaveLength(0);
+    quiet.gate.open();
+  });
+
+  it("does not send the same reply twice into one iMessage thread within two minutes", async () => {
+    const h = harness();
+    h.faux.setResponses([textTurn("11:40 AM in Hahn Auditorium."), textTurn("11:40 AM in Hahn Auditorium."), textTurn("Something new")]);
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "when is shishir", id: "m1" }));
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "when is shishir speaking", id: "m2" }));
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "and bret", id: "m3" }));
+    expect(h.sent.map((s) => s.msg.text)).toEqual(["11:40 AM in Hahn Auditorium.", "Something new"]);
+    expect(h.deps.audit.read({ kinds: ["outbound"] }).some((e) => e.detail["skipped"] === "duplicate reply")).toBe(true);
+  });
+
   it("deduplicates by message id", async () => {
     const h = harness();
     h.faux.setResponses([textTurn("once")]);
@@ -1149,5 +1181,15 @@ describe("runScheduled", () => {
     h.faux.setResponses([textTurn("   ")]);
     await h.runtime.runScheduled(entry);
     expect(h.sent).toHaveLength(0);
+  });
+});
+
+describe("shortReason", () => {
+  it("keeps a human reason and drops JSON bodies and status prefixes", async () => {
+    const { shortReason } = await import("../src/runtime.js");
+    expect(shortReason("rate limited by the provider")).toBe("rate limited by the provider");
+    expect(shortReason('400: {"message":"Invalid tools: array too long"}')).toBe("");
+    expect(shortReason("503 upstream unavailable\nmore detail")).toBe("upstream unavailable");
+    expect(shortReason("x".repeat(100))).toHaveLength(80);
   });
 });

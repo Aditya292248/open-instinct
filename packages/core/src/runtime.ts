@@ -103,6 +103,8 @@ const APPROVAL_CHANNELS: ReadonlySet<Channel> = new Set(["imessage", "sms", "cha
 const CHANNELS: ReadonlySet<string> = new Set(["imessage", "sms", "email", "a2a", "chat", "scheduled", "system"]);
 const REPLY_TOOL = "reply_instinct";
 const PROCESSING_FILE = "processing-events.json";
+/** An identical reply in the same carrier thread inside this window is a duplicate, not news. */
+const DUPLICATE_REPLY_WINDOW_MS = 2 * 60_000;
 
 /** Work may already have caused an external effect; automatic replay is not safe. */
 export class InboundUncertainError extends Error {
@@ -238,6 +240,7 @@ interface ConversationOpts {
 export class AgentRuntime {
   private readonly deps: RuntimeDeps;
   private readonly conversations = new Map<string, Conversation>();
+  private readonly lastDelivered = new Map<string, { text: string; at: number }>();
   private readonly now: () => Date;
   private readonly sessionsDir: string;
   private readonly notifier: OwnerNotifier;
@@ -376,7 +379,12 @@ export class AgentRuntime {
     const outcome = await withinBudget(run.then((result) => ({ result }), (error: unknown) => ({ error })), this.deps.replyBudgetMs ?? DEFAULT_REPLY_BUDGET_MS);
     if (outcome.state !== "done") {
       this.backgroundReplies.add(msg.id);
-      return { ...base, reply: ackText(msg.channel) };
+      const ack = ackText(msg.channel);
+      // On a carrier channel the HTTP response reaches nobody; with the feature on, text the ack into the thread.
+      if (this.deps.config.features.ackSlowReplies && (msg.channel === "imessage" || msg.channel === "sms") && !isGroup(msg) && originalPrincipal.kind === "owner") {
+        void this.safeSend({ channel: msg.channel, conversationKey: msg.conversationKey, text: ack }, originalPrincipal, msg.conversationKey).catch(() => undefined);
+      }
+      return { ...base, reply: ack };
     }
     if ("error" in outcome.value) throw outcome.value.error;
     return outcome.value.result;
@@ -792,6 +800,16 @@ export class AgentRuntime {
       const waiting = this.deps.approvals.pending().some((a) => a.conversationKey === conv.key);
       out.a2a = { taskId, intent: waiting ? "progress" : "complete" };
     }
+    // Two queued texts that produce the same answer must not land as two identical bubbles.
+    if (channel === "imessage" || channel === "sms") {
+      const last = this.lastDelivered.get(conv.key);
+      const at = this.now().getTime();
+      if (last && last.text === text && at - last.at < DUPLICATE_REPLY_WINDOW_MS) {
+        this.deps.audit.append({ kind: "outbound", conversationKey: conv.key, principal: conv.principal.id, detail: { channel, skipped: "duplicate reply", chars: text.length } });
+        return;
+      }
+      this.lastDelivered.set(conv.key, { text, at });
+    }
     // A reply to the owner changes what their next bare "yes" is about, unless this run raised the question.
     if (conv.principal.kind === "owner" && !opts.keepPrompt) this.deps.approvals.clearPrompted();
     await this.safeSend(out, conv.principal, conv.key);
@@ -835,7 +853,11 @@ export class AgentRuntime {
 
   private replyText(value: { ok: true; reply: string } | { ok: false; error: unknown }, principal: Principal): string {
     if (value.ok) return value.reply;
-    if (principal.kind === "owner") return `Something went wrong: ${errorMessage(value.error)}`;
+    // The full detail is in the audit log (auditError); the owner gets a short human reason, never a JSON body.
+    if (principal.kind === "owner") {
+      const reason = shortReason(errorMessage(value.error));
+      return `Hit a snag on my end${reason ? ` (${reason})` : ""}. Give me a minute and try that again.`;
+    }
     return "Sorry, I hit a problem. Please try again later.";
   }
 
@@ -1249,6 +1271,14 @@ export function stableJson(value: unknown): string {
     .filter((k) => o[k] !== undefined)
     .sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
+}
+
+/** The part of an error a person can use: no JSON bodies, no status-code prefixes, one short line. */
+export function shortReason(message: string): string {
+  let m = message.split(/[{\n]/)[0] ?? "";
+  m = m.replace(/^\s*\d{3}:?\s*/, "").replace(/[:\s]+$/, "").trim();
+  if (m.length > 80) m = `${m.slice(0, 77).trim()}...`;
+  return m;
 }
 
 export function hashArgs(args: unknown): string {
