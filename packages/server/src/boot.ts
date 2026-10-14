@@ -150,6 +150,17 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       outbox,
       workspaceDir: state.path("workspace"),
       onApprovalSettled: (approval, approved) => runtime.afterApproval(approval, approved),
+      // Image generation rides on an OpenAI-compatible key: a dedicated IMAGE_API_KEY, else the model key
+      // (an OpenAI-compatible proxy that forwards /images/generations works too). The shell never sees either.
+      ...(env.IMAGE_API_KEY || env.OPENAI_API_KEY
+        ? {
+            images: {
+              apiKey: (env.IMAGE_API_KEY || env.OPENAI_API_KEY) as string,
+              ...(env.IMAGE_BASE_URL || env.OPENAI_BASE_URL ? { baseUrl: env.IMAGE_BASE_URL || env.OPENAI_BASE_URL } : {}),
+              ...(env.IMAGE_MODEL ? { model: env.IMAGE_MODEL } : {}),
+            },
+          }
+        : {}),
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       ...(env.BRAVE_SEARCH_API_KEY ? { searchApiKey: env.BRAVE_SEARCH_API_KEY } : {}),
     }),
