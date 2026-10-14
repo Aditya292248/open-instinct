@@ -47,6 +47,14 @@ export interface GatewayOptions {
    * the connect link to the phone itself.
    */
   notifyExisting?: (user: UserRecord, connectUrl: string) => Promise<void>;
+  /**
+   * Called with every verified, parsed inbound event before it is queued for the
+   * agent. A front door can learn the sender's phone from the first message or
+   * keep counters; it must not throw and it cannot change the event.
+   */
+  onInbound?: (user: UserRecord, event: Record<string, unknown>) => void;
+  /** Ask Maritime for the agent's state before every relay (true), never (false), or only for agents under 15 minutes old (default). */
+  checkAgentStatus?: boolean;
 }
 
 export interface GatewayServer extends Server {
@@ -125,6 +133,7 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
     fetchImpl: opts.fetchImpl,
     logger: log,
     dedupe,
+    ...(opts.checkAgentStatus !== undefined ? { checkAgentStatus: opts.checkAgentStatus } : {}),
   };
   const inbox = new DurableInbox<{ userId: string; identityId: string; event: Record<string, unknown> }>({
     file: join(opts.store.dir, "webhook-inbox.json"),
@@ -300,6 +309,11 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
       if (!event || typeof event !== "object" || typeof event.id !== "string" || !event.id) throw new Error("invalid event");
     } catch {
       return json(res, 400, { error: "expected a webhook event with an id" });
+    }
+    try {
+      opts.onInbound?.(user, event);
+    } catch (err) {
+      log.warn("webhook.on_inbound_failed", { userId, error: err instanceof Error ? err.message : String(err) });
     }
     inbox.enqueue(`${user.id}:${event.id}`, { userId: user.id, identityId: user.identityId, event });
     res.writeHead(204);

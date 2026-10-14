@@ -230,6 +230,12 @@ export interface OwnerProfile {
   city?: string;
   /** Free-form facts the owner wants the agent to know, shown to the owner only. */
   about?: string;
+  /**
+   * The agent was handed out before its owner's phone was known (a signup form
+   * that asked only for a name). While `phones` is empty, the first person who
+   * texts it 1:1 on iMessage or SMS becomes the owner and this flag is cleared.
+   */
+  claimOnFirstContact?: boolean;
 }
 
 export interface InstinctConfig {

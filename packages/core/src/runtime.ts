@@ -20,7 +20,8 @@ import type { ContactStore } from "./contacts.js";
 import type { MemoryStore } from "./memory.js";
 import { OwnerNotifier } from "./notifier.js";
 import { DEFAULT_TIER_TABLE, SPEND_CAPABILITIES, type PolicyEngine } from "./policy.js";
-import { normalizePhone, resolvePrincipal } from "./principal.js";
+import { looksLikePhone, normalizePhone, resolvePrincipal } from "./principal.js";
+import { saveConfig } from "./config.js";
 import { readAgentsInstructions, readPersona } from "./persona.js";
 import { buildSystemPrompt, wrapUntrusted } from "./prompt.js";
 import { A2AStore, a2aState, a2aTerminal } from "./a2a-state.js";
@@ -358,6 +359,7 @@ export class AgentRuntime {
   }
 
   async handleInbound(msg: InboundMessage, opts: { waitForCompletion?: boolean } = {}): Promise<HandleResult> {
+    this.maybeClaimOwner(msg);
     const originalPrincipal = resolvePrincipal(msg, this.deps.config, this.deps.contacts);
     const base = { principal: originalPrincipal, conversationKey: msg.conversationKey, acked: true as const };
     if (this.seenBefore(msg.id)) return { ...base, blocked: "duplicate" };
@@ -380,6 +382,32 @@ export class AgentRuntime {
     }
     if ("error" in outcome.value) throw outcome.value.error;
     return outcome.value.result;
+  }
+
+  /**
+   * An agent handed out before its owner's phone was known (config.owner.claimOnFirstContact
+   * with no phones) adopts the first person who texts it 1:1 on a carrier channel. The claim
+   * is written to config.json and the flag is cleared, so it happens exactly once. Group
+   * threads, email and A2A never claim: a carrier-bound 1:1 sender is the only proof we take.
+   */
+  private maybeClaimOwner(msg: InboundMessage): void {
+    const owner = this.deps.config.owner;
+    if (!owner.claimOnFirstContact || owner.phones.length > 0) return;
+    if (msg.channel !== "imessage" && msg.channel !== "sms") return;
+    if (isGroup(msg)) return;
+    const from = (msg.from ?? "").trim();
+    if (!looksLikePhone(from)) return;
+    const phone = normalizePhone(from);
+    if (!phone) return;
+    owner.phones = [phone];
+    owner.claimOnFirstContact = false;
+    saveConfig(this.deps.state, this.deps.config);
+    this.deps.audit.append({
+      kind: "policy",
+      conversationKey: msg.conversationKey,
+      principal: "owner",
+      detail: { ownerClaimed: true, channel: msg.channel, phone },
+    });
   }
 
   private async processInbound(original: InboundMessage): Promise<HandleResult> {

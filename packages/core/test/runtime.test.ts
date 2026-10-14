@@ -223,6 +223,45 @@ describe("AgentRuntime.handleInbound", () => {
     expect(h.deps.audit.read({ kinds: ["outbound"] })).toHaveLength(1);
   });
 
+  it("adopts the first 1:1 carrier sender as the owner when claimOnFirstContact is set, exactly once", async () => {
+    const config = testConfig({ phones: [], claimOnFirstContact: true });
+    const h = harness({ deps: { config } });
+    h.faux.setResponses([textTurn("Hi, I'm yours now"), textTurn("Sorry, I only work for my owner")]);
+
+    const first = await h.runtime.handleInbound(inbound({ channel: "imessage", from: "+1 (617) 555-0177", conversationKey: "imessage:c1", text: "connect @maria-k7p2" }));
+    expect(first.principal.kind).toBe("owner");
+    expect(config.owner.phones).toEqual(["+16175550177"]);
+    expect(config.owner.claimOnFirstContact).toBe(false);
+    const saved = h.deps.state.readJson<{ owner: { phones: string[]; claimOnFirstContact?: boolean } }>("config.json", { owner: { phones: [] } });
+    expect(saved.owner.phones).toEqual(["+16175550177"]);
+    expect(saved.owner.claimOnFirstContact).toBe(false);
+    expect(h.deps.audit.read({ limit: 100 }).some((e) => e.kind === "policy" && e.detail["ownerClaimed"] === true && e.detail["phone"] === "+16175550177")).toBe(true);
+
+    const second = await h.runtime.handleInbound(inbound({ channel: "imessage", from: SAM_PHONE, conversationKey: "imessage:c2", text: "hi" }));
+    expect(second.principal.kind).toBe("stranger");
+    expect(config.owner.phones).toEqual(["+16175550177"]);
+  });
+
+  it("never claims from a group thread, an email, A2A or when phones are already set", async () => {
+    const group = testConfig({ phones: [], claimOnFirstContact: true });
+    const g = harness({ deps: { config: group } });
+    g.faux.setResponses([textTurn("hello"), textTurn("hello"), textTurn("hello")]);
+    await g.runtime.handleInbound(inbound({ channel: "imessage", from: SAM_PHONE, conversationKey: "imessage:g1", text: "hi all", meta: { isGroup: true, participants: [SAM_PHONE, "+16175550122"] } }));
+    expect(group.owner.phones).toEqual([]);
+    await g.runtime.handleInbound(inbound({ channel: "email", from: "sam@example.com", conversationKey: "email:t1", text: "hi" }));
+    expect(group.owner.phones).toEqual([]);
+    await g.runtime.handleInbound(a2aFrom(SAM_HANDLE, "hi"));
+    expect(group.owner.phones).toEqual([]);
+    expect(group.owner.claimOnFirstContact).toBe(true);
+
+    const taken = testConfig({ claimOnFirstContact: true });
+    const t = harness({ deps: { config: taken } });
+    t.faux.setResponses([textTurn("no")]);
+    const r = await t.runtime.handleInbound(inbound({ channel: "imessage", from: SAM_PHONE, conversationKey: "imessage:c3", text: "hi" }));
+    expect(r.principal.kind).toBe("stranger");
+    expect(taken.owner.phones).toEqual([OWNER_PHONE]);
+  });
+
   it("deduplicates by message id", async () => {
     const h = harness();
     h.faux.setResponses([textTurn("once")]);
