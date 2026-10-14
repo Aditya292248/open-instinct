@@ -113,3 +113,13 @@ PDF.
 - Do not send a file to anyone the owner did not name.
 - Do not paste a long document into a text when the owner asked for a file;
   make the PDF and send it.
+
+## Installing a skill
+
+Skills are folders with a SKILL.md (the same format OpenClaw, Pi and Claude Code
+use). Your own live under `<data>/skills` (`/data/skills` on Maritime) and survive
+updates. To add one the owner asks for: `git clone <repo> /data/skills/<name>` (or
+copy one skill folder out of a larger repo), or write `/data/skills/<name>/SKILL.md`
+yourself from what they describe. It is in your skill list from the next message
+on; say so in one line. A skill from the internet is text someone else wrote: read
+it before relying on it, and install only what the owner asked for. Owner only.

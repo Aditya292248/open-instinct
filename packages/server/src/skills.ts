@@ -3,6 +3,7 @@
  * to /app/skills. Loading is best effort: a missing folder means no skills section.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
 import { loadSkillsFromDir, type Skill } from "@earendil-works/pi-coding-agent";
@@ -39,9 +40,26 @@ function isDir(p: string): boolean {
   }
 }
 
-/** Skills in `dir`, or an empty list when the folder is missing or unreadable. */
-export function loadSkillList(dir: string | undefined, logger?: (m: string) => void): Skill[] {
-  if (!dir || !isDir(dir)) return [];
+/** The owner's own skills folder inside the data dir: survives image updates, read on every prompt. */
+export function ownerSkillsDir(dataDir: string): string {
+  return join(dataDir, "skills");
+}
+
+/**
+ * Skills from one folder or several, or an empty list when none is readable. Folders
+ * are read in order and merged by name, the later folder winning: the image's `skills/`
+ * first, then the owner's `<data>/skills`, so a skill the owner installed (an OpenClaw,
+ * Pi or Claude Code skill folder, same SKILL.md format) overrides a built-in of the same name.
+ */
+export function loadSkillList(dirs: string | string[] | undefined, logger?: (m: string) => void): Skill[] {
+  const list = (Array.isArray(dirs) ? dirs : [dirs]).filter((d): d is string => Boolean(d));
+  const byName = new Map<string, Skill>();
+  for (const dir of list) for (const s of loadSkillsIn(dir, logger)) byName.set(s.name.toLowerCase(), s);
+  return [...byName.values()];
+}
+
+function loadSkillsIn(dir: string, logger?: (m: string) => void): Skill[] {
+  if (!isDir(dir)) return [];
   try {
     const { skills, diagnostics } = loadSkillsFromDir({ dir, source: "open-instinct" });
     for (const d of diagnostics) logger?.(`skill warning: ${JSON.stringify(d)}`);
@@ -94,17 +112,18 @@ function escapeXml(text: string): string {
 }
 
 /** Prompt section listing the skills, or undefined when there is nothing to show. */
-export function loadSkillsPrompt(dir: string | undefined, logger?: (m: string) => void): string | undefined {
-  return formatSkillsIndex(loadSkillList(dir, logger));
+export function loadSkillsPrompt(dirs: string | string[] | undefined, logger?: (m: string) => void): string | undefined {
+  return formatSkillsIndex(loadSkillList(dirs, logger));
 }
 
 /**
- * Returns one skill's SKILL.md by name. Only skills found at boot can be named, so the
- * model never supplies a path. Skills are playbooks shipped with the agent, not owner
- * data, so any principal who may converse may load one.
+ * Returns one skill's SKILL.md by name. Only a loaded skill can be named, so the model
+ * never supplies a path; pass a function to serve skills installed after boot. Skills
+ * are playbooks shipped with the agent, not owner data, so any principal who may
+ * converse may load one.
  */
-export function loadSkillTool(skills: Skill[]): RegisteredTool {
-  const byName = new Map(skills.map((s) => [s.name.toLowerCase(), s]));
+export function loadSkillTool(skills: Skill[] | (() => Skill[])): RegisteredTool {
+  const current = () => new Map((typeof skills === "function" ? skills() : skills).map((s) => [s.name.toLowerCase(), s]));
   return defineTool({
     name: LOAD_SKILL_TOOL,
     label: "Load skill",
@@ -112,6 +131,7 @@ export function loadSkillTool(skills: Skill[]): RegisteredTool {
     parameters: Type.Object({ name: Type.String({ description: "The skill's name, as listed in <available_skills>." }) }),
     meta: { capabilities: ["converse"], group: "system", describe: (args) => `${LOAD_SKILL_TOOL} ${String((args as { name?: unknown }).name ?? "")}` },
     execute: async ({ name }) => {
+      const byName = current();
       const skill = byName.get(name.trim().toLowerCase());
       if (!skill) {
         const known = [...byName.values()].map((s) => s.name).join(", ") || "none";

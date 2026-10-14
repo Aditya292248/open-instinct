@@ -32,6 +32,12 @@ One directory per skill, named like the skill. The file is always `SKILL.md`.
 Keep everything the skill needs in that one file: `load_skill` returns
 `SKILL.md` only.
 
+A second folder, `<data>/skills` (`/data/skills` on Maritime), belongs to the
+owner. It is read after this one, re-read every 30 seconds, and a skill there
+with the same name as a shipped one replaces it. That is where an agent installs
+a skill the owner asks for (`git clone` a skill repo, or write the SKILL.md), and
+it survives image updates because it lives in the data directory.
+
 ## Format
 
 ```markdown

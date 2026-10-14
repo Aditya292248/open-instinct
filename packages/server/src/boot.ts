@@ -39,7 +39,10 @@ import { describeDataPart, promptExtraFor } from "./hooks.js";
 import { appsNotConfiguredTool, setupSummaryFor } from "./setup-summary.js";
 import { createScheduleSync, type ScheduleSync } from "./maritime-schedules.js";
 import { loadPaymentsModule, paymentsEnv, type LinkWalletLike, type PaymentsModule } from "./payments.js";
-import { formatSkillsIndex, loadSkillList, loadSkillTool, resolveSkillsDir } from "./skills.js";
+import { formatSkillsIndex, loadSkillList, loadSkillTool, ownerSkillsDir, resolveSkillsDir } from "./skills.js";
+
+/** How often the skill folders are re-read; an owner-installed skill shows up within this. */
+const SKILLS_REFRESH_MS = 30_000;
 
 export interface BootOptions {
   streamFn?: StreamFn;
@@ -313,12 +316,24 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   }
 
   const skillsDir = resolveSkillsDir({ explicit: opts.skillsDir, env, packageUrl: import.meta.url });
-  const skillList = loadSkillList(skillsDir, log);
-  const skills = formatSkillsIndex(skillList);
-  if (skills) promptSections.push(skills);
-  // Registered even when every skill is hidden: those load by name from a schedule or command.
-  if (skillList.length > 0) registry.register(loadSkillTool(skillList));
-  const skillsPrompt = promptSections.length > 0 ? promptSections.join("\n\n") : undefined;
+  // The image's skills/ first, then the owner's <data>/skills. Skills are re-read every 30 s, so one
+  // installed there after boot (a git clone, a SKILL.md the agent wrote) is in the index and loadable
+  // by name on the owner's next message, and overrides a built-in of the same name.
+  const skillDirs = [skillsDir, ownerSkillsDir(state.root)].filter((d): d is string => Boolean(d));
+  let skillsCache: { at: number; list: ReturnType<typeof loadSkillList> } | undefined;
+  const skillList = () => {
+    const at = Date.now();
+    if (!skillsCache || at - skillsCache.at > SKILLS_REFRESH_MS) skillsCache = { at, list: loadSkillList(skillDirs, skillsCache ? undefined : log) };
+    return skillsCache.list;
+  };
+  skillList();
+  // Registered even with no skill yet, and even when every skill is hidden: those load by name.
+  registry.register(loadSkillTool(skillList));
+  const staticSections = promptSections.join("\n\n");
+  const skillsPrompt = () => {
+    const parts = [staticSections, formatSkillsIndex(skillList())].filter((p): p is string => Boolean(p && p.trim()));
+    return parts.length > 0 ? parts.join("\n\n") : undefined;
+  };
 
   // eslint-disable-next-line prefer-const
   let runtime: AgentRuntime;

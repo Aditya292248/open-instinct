@@ -304,7 +304,7 @@ Server:
 | `INSTINCT_BIND` | bind address; default `127.0.0.1`, or `0.0.0.0` when `PORT` or a `MARITIME_*` variable is set |
 | `INSTINCT_PUBLIC_URL` | this agent's public URL, used to build the Link callback |
 | `INSTINCT_REPLY_BUDGET_MS` | how long `/chat` waits before acknowledging (default 20000) |
-| `INSTINCT_SKILLS_DIR` | SKILL.md folder (default `<repo>/skills`) |
+| `INSTINCT_SKILLS_DIR` | SKILL.md folder (default `<repo>/skills`); `<data>/skills` is read after it, every 30 s, and wins on a name clash |
 | `INSTINCT_COMPUTER` | `auto` (desktopd if present, else hosted if `MARITIME_API_KEY`, else none), `desktopd`, `maritime`, `none` |
 | `MARITIME_API_KEY`, `MARITIME_COMPUTERS_MCP_URL` | hosted computer fallback |
 | `MARITIME_DESKTOP`, `MARITIME_AGENT_ID`, `MARITIME_BACKEND_URL`, `MARITIME_INTERNAL_TOKEN`, `PORT` | injected by Maritime inside a hosted agent |

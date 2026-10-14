@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ToolContext, ToolResultLike } from "@open-instinct/core";
-import { LOAD_SKILL_TOOL, loadSkillList, loadSkillTool, loadSkillsPrompt, resolveSkillsDir } from "../src/skills.js";
+import { LOAD_SKILL_TOOL, loadSkillList, loadSkillTool, loadSkillsPrompt, ownerSkillsDir, resolveSkillsDir } from "../src/skills.js";
 
 const stranger = { principal: { kind: "stranger", id: "stranger:x", tier: "stranger", displayName: "x" }, conversationKey: "imessage:1", channel: "imessage", now: () => new Date() } as unknown as ToolContext;
 const textOf = (r: ToolResultLike) => (typeof r === "string" ? r : r.content.map((c) => (c.type === "text" ? c.text : "")).join(""));
@@ -78,5 +78,45 @@ describe("skills", () => {
     const list = loadSkillList(dir, (m) => logs.push(m));
     expect(list).toHaveLength(1);
     expect(logs.some((l) => l.includes("duplicate name"))).toBe(true);
+  });
+});
+
+describe("owner skills folder", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "skills-owner-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const skill = (root: string, name: string, description: string) => {
+    mkdirSync(join(root, name), { recursive: true });
+    writeFileSync(join(root, name, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\nFrom ${root}.\n`);
+  };
+
+  it("merges several folders, the later one winning on a name clash, and skips missing ones", () => {
+    const image = join(dir, "image");
+    const owner = join(dir, "owner");
+    skill(image, "dining", "Built-in dining");
+    skill(image, "travel", "Built-in travel");
+    skill(owner, "dining", "Owner dining rules");
+    skill(owner, "haiku", "Write a haiku when asked");
+    const prompt = loadSkillsPrompt([image, join(dir, "missing"), owner])!;
+    expect(prompt).toContain("Owner dining rules");
+    expect(prompt).not.toContain("Built-in dining");
+    expect(prompt).toContain("Built-in travel");
+    expect(prompt).toContain("Write a haiku when asked");
+    expect(loadSkillsPrompt([join(dir, "missing")])).toBeUndefined();
+    expect(loadSkillList([image, owner]).map((s) => s.name)).toEqual(["dining", "travel", "haiku"]);
+    expect(ownerSkillsDir("/data")).toBe(join("/data", "skills"));
+  });
+
+  it("load_skill with a getter serves a skill installed after the tool was registered", async () => {
+    const owner = join(dir, "owner");
+    const tool = loadSkillTool(() => loadSkillList([owner])).spec;
+    expect(textOf(await tool.execute({ name: "haiku" }, stranger))).toContain("Known skills: none");
+    skill(owner, "haiku", "Write a haiku when asked");
+    expect(textOf(await tool.execute({ name: "haiku" }, stranger))).toContain(`From ${owner}.`);
   });
 });
