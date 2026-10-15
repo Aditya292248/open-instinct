@@ -251,7 +251,13 @@ export interface InstinctConfig {
   model: { primary: string; fallback?: string; cheap?: string; thinking?: "off" | "minimal" | "low" | "medium" | "high" };
   computer: { mode: "auto" | "desktopd" | "maritime" | "none"; desktopdUrl?: string; maritimeMcpUrl?: string };
   apps: { enabled: boolean; toolkits: string[] };
-  features: { typingIndicators: boolean; tapbacks: boolean; journal: boolean };
+  features: {
+    typingIndicators: boolean;
+    tapbacks: boolean;
+    journal: boolean;
+    /** Text a one-line "on it" on iMessage/SMS when a reply passes the budget, instead of silence until it is done. */
+    ackSlowReplies?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------

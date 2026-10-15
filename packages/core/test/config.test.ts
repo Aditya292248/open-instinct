@@ -41,6 +41,12 @@ describe("config", () => {
     expect(loadConfig(tempState(), { INSTINCT_TIMEZONE: "Europe/Berlin", INSTINCT_OWNER_TIMEZONE: "Asia/Tokyo" }).owner.timezone).toBe("Asia/Tokyo");
   });
 
+  it("seeds features.ackSlowReplies from INSTINCT_ACK_SLOW_REPLIES only when set", () => {
+    expect(loadConfig(tempState(), {}).features.ackSlowReplies).toBeUndefined();
+    expect(loadConfig(tempState(), { INSTINCT_ACK_SLOW_REPLIES: "0" }).features.ackSlowReplies).toBeUndefined();
+    expect(loadConfig(tempState(), { INSTINCT_ACK_SLOW_REPLIES: "true" }).features.ackSlowReplies).toBe(true);
+  });
+
   it("prefers the file over env on later loads, except INSTINCT_MODEL", () => {
     const state = tempState();
     loadConfig(state, { INSTINCT_OWNER_NAME: "Maria", INSTINCT_OWNER_PHONE: "+16175550100" });
