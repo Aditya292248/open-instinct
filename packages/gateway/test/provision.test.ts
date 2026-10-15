@@ -119,6 +119,8 @@ describe("provisionUser", () => {
     expect(keys).not.toContain("INSTINCT_MODEL");
     expect(keys).not.toContain("LINK_CLIENT_ID");
     expect(maritimeCreateBody(readyUser(), { maritime: { apiKey: "k", agentImage: "img", idleTtlSeconds: 60 } })["idleTtlSeconds"]).toBe(60);
+    expect(maritimeCreateBody(readyUser(), { maritime: { apiKey: "k", agentImage: "img" } })["desktop"]).toBe(true);
+    expect(maritimeCreateBody(readyUser(), { maritime: { apiKey: "k", agentImage: "img", desktop: false } })["desktop"]).toBe(false);
     expect(webhookUrlFor("https://gw.example.com///", "usr x")).toBe("https://gw.example.com/webhooks/inkbox/usr%20x");
   });
 

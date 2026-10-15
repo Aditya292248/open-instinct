@@ -47,6 +47,7 @@ described in the next section.
 | Trusted person | Hide an instruction inside a normal message | Untrusted wrapping; policy guard |
 | Other agent | Ask for calendar titles, memory or a purchase | Policy guard; free/busy only for friends, nothing for strangers |
 | Other agent | Claim to be the owner or a trusted agent | Inkbox contact rules plus our contact lookup by handle; `owner` is a reserved handle; `staff` is only assignable to a contact with an agent handle and only applies over A2A |
+| Stranger | Text an agent handed out without an owner phone first, to become its owner | Claiming needs the one-time `INSTINCT_OWNER_CLAIM_CODE` the front door shows only to the signer-up; no code means no claim; 10 wrong tries per number; 1:1 carrier messages only; code cleared after use |
 | Stranger | Flood the agent with messages | Stranger limits: 3 new conversations a day, 10 messages each, 3 relayed messages a day |
 | Stranger | Read anything about the owner | Strangers get no memory, no profile, no tools except `notify_owner` |
 | Web page | Prompt injection in page text or a screenshot | Untrusted wrapping; policy guard runs on every tool call |

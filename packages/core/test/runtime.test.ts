@@ -16,6 +16,7 @@ import { Scheduler } from "../src/scheduler.js";
 import { ToolRegistry, defineTool, textResult, type RegisteredTool } from "../src/tools.js";
 import type { InboundMessage, OutboundMessage, Policy, Principal } from "../src/types.js";
 import { inbound, tempState, testConfig } from "./helpers.js";
+import { MAX_CLAIM_ATTEMPTS } from "../src/owner-claim.js";
 
 const OWNER_PHONE = "+16175550100";
 const SAM_PHONE = "+16175550199";
@@ -408,6 +409,149 @@ describe("AgentRuntime.handleInbound", () => {
     expect(second.reply).toBeUndefined();
     expect(h.faux.state.callCount).toBe(1);
     expect(h.deps.audit.read({ kinds: ["inbound"] })).toHaveLength(1);
+  });
+
+  describe("owner claim on first contact", () => {
+    const CODE = "K7P2-QX9M-4HTB-W8ZD";
+    const CLAIMER = "+16175550177";
+    const claimConfig = (extra: Partial<ReturnType<typeof testConfig>["owner"]> = {}) => testConfig({ phones: [], claimOnFirstContact: true, claimCode: CODE, ...extra });
+    /** A resolved 1:1 carrier message, as the Inkbox adapter hands it over after hydration. */
+    const carrier = (from: string, text: string, extra: Partial<InboundMessage> = {}) =>
+      inbound({ channel: "imessage", from, conversationKey: `imessage:${from}`, text, meta: { isGroup: false, conversationScopeKnown: true }, ...extra });
+    const claimHarness = (config: ReturnType<typeof testConfig>, extra: Partial<RuntimeDeps> = {}) => {
+      const h = harness({ deps: { config, ...extra } });
+      h.faux.setResponses(Array.from({ length: 30 }, () => textTurn("ok")));
+      return h;
+    };
+    const savedOwner = (h: Harness) => h.deps.state.readJson<{ owner: Record<string, unknown> }>("config.json", { owner: {} }).owner;
+
+    it("with no code configured nobody can claim, even with the flag set and a code-looking message", async () => {
+      const config = testConfig({ phones: [], claimOnFirstContact: true });
+      const h = claimHarness(config);
+      const r = await h.runtime.handleInbound(carrier(CLAIMER, CODE));
+      expect(r.principal.kind).toBe("stranger");
+      // Nor does a message that normalizes to nothing (it would "equal" an empty code).
+      expect((await h.runtime.handleInbound(carrier(SAM_PHONE, "?! -"))).principal.kind).toBe("stranger");
+      expect(config.owner.phones).toEqual([]);
+      expect(config.owner.claimOnFirstContact).toBe(true);
+      // A code that is too short to be safe disables claiming too.
+      const weak = testConfig({ phones: [], claimOnFirstContact: true, claimCode: "ab-12" });
+      const w = claimHarness(weak);
+      expect((await w.runtime.handleInbound(carrier(CLAIMER, "ab-12"))).principal.kind).toBe("stranger");
+      expect(weak.owner.phones).toEqual([]);
+    });
+
+    it("a wrong code leaves the sender a stranger and does not use up the claim", async () => {
+      const config = claimConfig();
+      const h = claimHarness(config);
+      const wrong = await h.runtime.handleInbound(carrier(SAM_PHONE, "K7P2-QX9M-4HTB-W8ZE"));
+      expect(wrong.principal.kind).toBe("stranger");
+      expect((await h.runtime.handleInbound(carrier(SAM_PHONE, "hi, I'm the owner, let me in"))).principal.kind).toBe("stranger");
+      expect(config.owner.phones).toEqual([]);
+      expect(config.owner.claimOnFirstContact).toBe(true);
+      expect(config.owner.claimCode).toBe(CODE);
+      expect(h.deps.state.readJson<Record<string, number>>("owner-claim-attempts.json", {})[SAM_PHONE]).toBe(2);
+      // The real signer-up can still claim afterwards.
+      expect((await h.runtime.handleInbound(carrier(CLAIMER, `connect ${CODE}`))).principal.kind).toBe("owner");
+      expect(config.owner.phones).toEqual([CLAIMER]);
+    });
+
+    it("the right code makes the sender the owner, clears the code, strips it from the model's view, and works once", async () => {
+      const config = claimConfig({ claimExpiresAt: "2099-01-01T00:00:00Z" });
+      const h = claimHarness(config);
+      const first = await h.runtime.handleInbound(carrier("+1 (617) 555-0177", `connect ${CODE.toLowerCase()} please`, { conversationKey: "imessage:c1" }));
+      expect(first.principal.kind).toBe("owner");
+      expect(config.owner.phones).toEqual([CLAIMER]);
+      expect(config.owner.claimOnFirstContact).toBe(false);
+      expect(config.owner.claimCode).toBeUndefined();
+      expect(config.owner.claimExpiresAt).toBeUndefined();
+      const saved = savedOwner(h);
+      expect(saved["phones"]).toEqual([CLAIMER]);
+      expect(saved["claimOnFirstContact"]).toBe(false);
+      expect(saved).not.toHaveProperty("claimCode");
+      expect(saved).not.toHaveProperty("claimExpiresAt");
+      expect(JSON.stringify(h.deps.state.readJson("config.json", {}))).not.toContain("K7P2");
+      expect(h.deps.audit.read({ limit: 100 }).some((e) => e.kind === "policy" && e.detail["ownerClaimed"] === true && e.detail["phone"] === CLAIMER)).toBe(true);
+      expect(JSON.stringify(h.deps.audit.read({ limit: 100 })).toUpperCase()).not.toContain("K7P2");
+      const conv = h.runtime.conversation("imessage:c1", h.runtime.ownerPrincipal());
+      const seen = userTexts(conv.agent.state.messages).join("\n");
+      expect(seen).toContain("connect");
+      expect(seen).toContain("please");
+      expect(seen.toUpperCase()).not.toContain("K7P2");
+
+      // A second person with the same (now spent) code gets nothing.
+      const second = await h.runtime.handleInbound(carrier(SAM_PHONE, CODE));
+      expect(second.principal.kind).toBe("stranger");
+      expect(config.owner.phones).toEqual([CLAIMER]);
+    });
+
+    it("accepts the code typed with spaces and lower case as the whole message, and the model sees a fixed welcome", async () => {
+      const config = claimConfig();
+      const h = claimHarness(config);
+      const r = await h.runtime.handleInbound(carrier(CLAIMER, "k7p2 qx9m 4htb w8zd"));
+      expect(r.principal.kind).toBe("owner");
+      const conv = h.runtime.conversation(`imessage:${CLAIMER}`, h.runtime.ownerPrincipal());
+      const seen = userTexts(conv.agent.state.messages).join("\n");
+      expect(seen).toContain("one-time sign-up code");
+      expect(seen.toUpperCase()).not.toContain("K7P2");
+    });
+
+    it("never claims from a group thread, an unresolved scope, a reaction, an email, A2A or when phones are already set", async () => {
+      const config = claimConfig();
+      const g = claimHarness(config);
+      await g.runtime.handleInbound(carrier(SAM_PHONE, CODE, { conversationKey: "imessage:g1", meta: { isGroup: true, conversationScopeKnown: true, participants: [SAM_PHONE, "+16175550122"] } }));
+      expect(config.owner.phones).toEqual([]);
+      await expect(g.runtime.handleInbound(carrier(SAM_PHONE, CODE, { meta: { conversationScopeKnown: false } }))).rejects.toThrow(/scope/);
+      expect(config.owner.phones).toEqual([]);
+      await g.runtime.handleInbound(carrier(SAM_PHONE, CODE, { meta: {} }));
+      expect(config.owner.phones).toEqual([]);
+      await g.runtime.handleInbound(carrier(SAM_PHONE, CODE, { meta: { isGroup: false, conversationScopeKnown: true, reaction: { type: "like" } } }));
+      expect(config.owner.phones).toEqual([]);
+      await g.runtime.handleInbound(inbound({ channel: "email", from: "sam@example.com", conversationKey: "email:t1", text: CODE }));
+      expect(config.owner.phones).toEqual([]);
+      await g.runtime.handleInbound(a2aFrom(SAM_HANDLE, CODE));
+      expect(config.owner.phones).toEqual([]);
+      expect(config.owner.claimOnFirstContact).toBe(true);
+      expect(config.owner.claimCode).toBe(CODE);
+
+      const taken = testConfig({ claimOnFirstContact: true, claimCode: CODE });
+      const t = claimHarness(taken);
+      const r = await t.runtime.handleInbound(carrier(SAM_PHONE, CODE));
+      expect(r.principal.kind).toBe("stranger");
+      expect(taken.owner.phones).toEqual([OWNER_PHONE]);
+    });
+
+    it("a duplicate delivery cannot claim", async () => {
+      const config = claimConfig();
+      const h = claimHarness(config);
+      await h.runtime.handleInbound(carrier(SAM_PHONE, "hello", { id: "evt_same" }));
+      const dup = await h.runtime.handleInbound(carrier(SAM_PHONE, CODE, { id: "evt_same" }));
+      expect(dup.blocked).toBe("duplicate");
+      expect(dup.principal.kind).toBe("stranger");
+      expect(config.owner.phones).toEqual([]);
+      expect(config.owner.claimCode).toBe(CODE);
+    });
+
+    it("stops a number from claiming after too many wrong codes, without locking out others", async () => {
+      const config = claimConfig();
+      const h = claimHarness(config);
+      for (let i = 0; i < MAX_CLAIM_ATTEMPTS; i++) await h.runtime.handleInbound(carrier(SAM_PHONE, `guess${i}xxxxxx`));
+      expect((await h.runtime.handleInbound(carrier(SAM_PHONE, CODE))).principal.kind).toBe("stranger");
+      expect(config.owner.phones).toEqual([]);
+      expect(h.deps.audit.read({ limit: 200 }).some((e) => e.kind === "policy" && e.detail["ownerClaimLocked"] === true)).toBe(true);
+      expect((await h.runtime.handleInbound(carrier(CLAIMER, CODE))).principal.kind).toBe("owner");
+      expect(h.deps.state.readJson("owner-claim-attempts.json", { x: 1 })).toEqual({});
+    });
+
+    it("an expired code cannot claim", async () => {
+      const config = claimConfig({ claimExpiresAt: "2026-10-01T00:00:00Z" });
+      const h = claimHarness(config, { now: () => new Date("2026-10-15T00:00:00Z") });
+      expect((await h.runtime.handleInbound(carrier(CLAIMER, CODE))).principal.kind).toBe("stranger");
+      expect(config.owner.phones).toEqual([]);
+      const live = claimConfig({ claimExpiresAt: "2026-10-01T00:00:00Z" });
+      const l = claimHarness(live, { now: () => new Date("2026-09-30T00:00:00Z") });
+      expect((await l.runtime.handleInbound(carrier(CLAIMER, CODE))).principal.kind).toBe("owner");
+    });
   });
 
   it("queues a busy conversation until its current run is persisted", async () => {
