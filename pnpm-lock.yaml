@@ -309,6 +309,9 @@ importers:
       '@open-instinct/apps':
         specifier: workspace:*
         version: link:../apps
+      '@open-instinct/atomicmail':
+        specifier: workspace:*
+        version: link:../atomicmail
       '@open-instinct/computer':
         specifier: workspace:*
         version: link:../computer

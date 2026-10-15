@@ -32,6 +32,7 @@ import { computerGuidance, detectComputer } from "@open-instinct/computer";
 import type { ComputerBackend } from "@open-instinct/computer";
 import { ComposioApps, DEFAULT_TOOLKITS, OPENAI_COMPLETIONS_TOOL_LIMIT, appsGuidance, appsTools, composioModeFor } from "@open-instinct/apps";
 import { ampleTools, type AmpleCredentials } from "@open-instinct/ample";
+import { AtomicMailBackend, atomicMailGuidance } from "@open-instinct/atomicmail";
 import { contextTools } from "@open-instinct/context";
 import { networkTools } from "@open-instinct/network";
 import { ChatAwareOutbox, ConsoleOutbox, type ChatReplyBuffer } from "./console-outbox.js";
@@ -275,6 +276,24 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       log(`apps: ${connected.tools.length} tools${composio.allToolkits ? " (any app by name)" : ""}, connected: ${on.join(", ") || "none"}`);
     }
   }
+  // Atomic Mail: an inbox of the agent's own, when the deployer gave us a key. The key is
+  // the switch. With it unset nothing here runs and nothing else changes.
+  let mailbox: AtomicMailBackend | undefined;
+  if (env.ATOMIC_MAIL_API_KEY) {
+    const backend = new AtomicMailBackend({
+      apiKey: env.ATOMIC_MAIL_API_KEY,
+      ...(env.ATOMIC_MAIL_MCP_URL ? { url: env.ATOMIC_MAIL_MCP_URL } : {}),
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      logger: log,
+    });
+    const connected = await safely(log, "atomicmail", async () => ({ tools: await backend.tools(), address: await backend.address() }));
+    if (connected && connected.tools.length > 0) {
+      mailbox = backend;
+      registry.registerMany(connected.tools);
+      promptSections.push(atomicMailGuidance(connected.address));
+      log(`atomicmail: ${connected.tools.length} tools${connected.address ? ` (${connected.address})` : ""}`);
+    }
+  }
   // No Composio key: the model still gets an apps_connect tool, so "connect my Gmail"
   // produces one precise sentence about what to set up instead of an invented screen.
   if (!apps) registry.register(appsNotConfiguredTool());
@@ -412,6 +431,7 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       sync?.stop();
       await safely(log, "computer close", () => computer?.close());
       await safely(log, "apps close", () => apps?.close());
+      await safely(log, "atomicmail close", () => mailbox?.close());
     },
   };
 }
