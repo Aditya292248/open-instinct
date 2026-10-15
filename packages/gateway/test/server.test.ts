@@ -290,6 +290,99 @@ describe("gateway http", () => {
     expect(mar.calls).toHaveLength(1);
   });
 
+  it("calls onInbound with the user and the parsed event only after the signature passed", async () => {
+    const store = new UserStore(tempDir());
+    const user = store.save(readyUser({ phone: "" }));
+    const seen: Array<{ userId: string; eventId: string }> = [];
+    const server = createGateway({
+      store,
+      publicUrl: "https://gw.example.com",
+      maritime: { apiKey: "mk_test", baseUrl: "https://maritime.test", agentImage: "img:1" },
+      logger: silentLogger,
+      fetchImpl: fakeMaritime().fetch,
+      onInbound: (u, event) => {
+        seen.push({ userId: u.id, eventId: String(event["id"]) });
+        throw new Error("hooks must not break the relay");
+      },
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const raw = JSON.stringify(imessageEvent("evt_hook", "conv_hook"));
+    expect((await fetch(`${base}/webhooks/inkbox/${user.id}`, { method: "POST", body: raw, headers: signHeaders(raw, "whsec_wrong") })).status).toBe(401);
+    expect(seen).toEqual([]);
+    expect((await fetch(`${base}/webhooks/inkbox/${user.id}`, { method: "POST", body: raw, headers: signHeaders(raw, user.signingKey) })).status).toBe(204);
+    expect(seen).toEqual([{ userId: user.id, eventId: "evt_hook" }]);
+    expect(store.byPhone("")).toBeUndefined();
+  });
+
+  it("onInbound: a rejected async hook is logged, not fatal, and mutations never reach the relayed event", async () => {
+    const store = new UserStore(tempDir());
+    const user = store.save(readyUser());
+    const mar = fakeMaritime();
+    const warnings: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+    const logger = { ...silentLogger, warn: (msg: string, meta?: Record<string, unknown>) => warnings.push({ msg, meta }) };
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const server = createGateway({
+        store,
+        publicUrl: "https://gw.example.com",
+        maritime: { apiKey: "mk_test", baseUrl: "https://maritime.test", agentImage: "img:1" },
+        logger,
+        fetchImpl: mar.fetch,
+        onInbound: async (u, event) => {
+          // Try to rewrite what the agent will see, and the user record, then fail.
+          const message = (event["data"] as { message: Record<string, unknown> }).message;
+          message["content"] = "INJECTED";
+          message["remote_number"] = "+19990000000";
+          u.phone = "+19990000000";
+          await new Promise((r) => setTimeout(r, 5));
+          throw new Error("async hook blew up");
+        },
+      });
+      servers.push(server);
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const raw = JSON.stringify(imessageEvent("evt_async", "conv_async"));
+      expect((await fetch(`${base}/webhooks/inkbox/${user.id}`, { method: "POST", body: raw, headers: signHeaders(raw, user.signingKey) })).status).toBe(204);
+      await waitFor(() => mar.calls.some((c) => c.url.endsWith("/chat")) && warnings.some((w) => w.msg === "webhook.on_inbound_failed"));
+      const relayed = mar.calls.find((c) => c.url.endsWith("/chat"))!.body as { message: string };
+      const event = decodeEvent(relayed.message) as unknown as Record<string, unknown>;
+      expect(JSON.stringify(event)).not.toContain("INJECTED");
+      expect(JSON.stringify(event)).not.toContain("+19990000000");
+      expect(JSON.stringify(event)).toContain("evt_async");
+      expect(warnings.find((w) => w.msg === "webhook.on_inbound_failed")?.meta).toMatchObject({ userId: user.id, error: "async hook blew up" });
+      expect(store.get(user.id)?.phone).toBe("+14155550123");
+      // The server is still up after the rejection.
+      expect((await fetch(`${base}/health`)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("checkAgentStatus: true holds a webhook for an old agent that is redeploying", async () => {
+    const store = new UserStore(tempDir());
+    const user = store.save(readyUser());
+    const mar = fakeMaritime();
+    mar.agentStatus["agt_42"] = "deploying";
+    const server = createGateway({ store, publicUrl: "https://gw.example.com", maritime: { apiKey: "mk_test", baseUrl: "https://maritime.test", agentImage: "img:1" }, logger: silentLogger, fetchImpl: mar.fetch, checkAgentStatus: true });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const raw = JSON.stringify(imessageEvent("evt_redeploy", "conv_r"));
+    expect((await fetch(`${base}/webhooks/inkbox/${user.id}`, { method: "POST", body: raw, headers: signHeaders(raw, user.signingKey) })).status).toBe(204);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(mar.calls.filter((c) => c.url.endsWith("/chat"))).toHaveLength(0);
+    expect(mar.calls.filter((c) => c.method === "GET" && c.url.endsWith("/api/agents/agt_42")).length).toBeGreaterThan(0);
+    // The durable inbox keeps the event for a later retry instead of dropping it.
+    const health = (await (await fetch(`${base}/health`)).json()) as { inbox: Record<string, number> };
+    expect(Object.values(health.inbox).reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+  });
+
   it("relays the Link OAuth callback to the user's agent as an envelope and shows a done page", async () => {
     const { base, store, mar } = await boot();
     store.save(readyUser({ id: "usr_link" }));

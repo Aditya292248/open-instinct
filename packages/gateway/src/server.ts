@@ -47,6 +47,16 @@ export interface GatewayOptions {
    * the connect link to the phone itself.
    */
   notifyExisting?: (user: UserRecord, connectUrl: string) => Promise<void>;
+  /**
+   * Called with every verified, parsed inbound event before it is queued for the
+   * agent. A front door can learn the sender's phone from the first message or
+   * keep counters. It gets a deep copy, so it cannot change what is relayed. A throw
+   * or a rejected promise is logged and never blocks or crashes the relay; the hook
+   * is not awaited.
+   */
+  onInbound?: (user: UserRecord, event: Record<string, unknown>) => void | Promise<void>;
+  /** Ask Maritime for the agent's state before every relay (true), never (false), or only for agents under 15 minutes old (default). */
+  checkAgentStatus?: boolean;
 }
 
 export interface GatewayServer extends Server {
@@ -125,6 +135,7 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
     fetchImpl: opts.fetchImpl,
     logger: log,
     dedupe,
+    ...(opts.checkAgentStatus !== undefined ? { checkAgentStatus: opts.checkAgentStatus } : {}),
   };
   const inbox = new DurableInbox<{ userId: string; identityId: string; event: Record<string, unknown> }>({
     file: join(opts.store.dir, "webhook-inbox.json"),
@@ -300,6 +311,15 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
       if (!event || typeof event !== "object" || typeof event.id !== "string" || !event.id) throw new Error("invalid event");
     } catch {
       return json(res, 400, { error: "expected a webhook event with an id" });
+    }
+    if (opts.onInbound) {
+      const hookFailed = (err: unknown) => log.warn("webhook.on_inbound_failed", { userId, error: err instanceof Error ? err.message : String(err) });
+      try {
+        const pending = opts.onInbound(structuredClone(user), structuredClone(event));
+        if (pending && typeof (pending as Promise<void>).then === "function") (pending as Promise<void>).then(undefined, hookFailed);
+      } catch (err) {
+        hookFailed(err);
+      }
     }
     inbox.enqueue(`${user.id}:${event.id}`, { userId: user.id, identityId: user.identityId, event });
     res.writeHead(204);

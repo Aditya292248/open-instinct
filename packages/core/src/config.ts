@@ -50,6 +50,10 @@ export function configFromEnv(env: NodeJS.ProcessEnv): InstinctConfig {
   if (env.INSTINCT_OWNER_NAME?.trim()) cfg.owner.name = env.INSTINCT_OWNER_NAME.trim();
   cfg.owner.phones = splitList(env.INSTINCT_OWNER_PHONE).map(normalizePhone).filter(Boolean);
   cfg.owner.emails = splitList(env.INSTINCT_OWNER_EMAIL).map(normalizeEmail).filter(Boolean);
+  if (/^(1|true|yes)$/i.test((env.INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT ?? "").trim())) cfg.owner.claimOnFirstContact = true;
+  // The claim only works with a one-time code; see owner-claim.ts.
+  if (env.INSTINCT_OWNER_CLAIM_CODE?.trim()) cfg.owner.claimCode = env.INSTINCT_OWNER_CLAIM_CODE.trim();
+  if (env.INSTINCT_OWNER_CLAIM_EXPIRES_AT?.trim()) cfg.owner.claimExpiresAt = env.INSTINCT_OWNER_CLAIM_EXPIRES_AT.trim();
   // INSTINCT_TIMEZONE is the name older .env.example files used; keep honouring it.
   const timezone = env.INSTINCT_OWNER_TIMEZONE?.trim() || env.INSTINCT_TIMEZONE?.trim();
   if (timezone) cfg.owner.timezone = timezone;

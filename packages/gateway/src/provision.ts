@@ -36,6 +36,8 @@ export interface MaritimeProvisionOptions {
   useMaritimeLlm?: boolean;
   /** Model id behind `openai-compatible/`. Default DEFAULT_MARITIME_LLM_MODEL. */
   maritimeModel?: string;
+  /** Give each VM a Linux desktop (4 GiB, 2 vCPU). Default true. False is cheaper; the agent falls back to the hosted Computers MCP or no computer. */
+  desktop?: boolean;
 }
 
 /** Stripe Link Agent Wallet credentials handed to every agent so it can pay for things. */
@@ -140,7 +142,7 @@ export function maritimeCreateBody(user: UserRecord, deps: AgentEnvDeps): Record
     imageName: deps.maritime.agentImage,
     exposedPort: MARITIME_AGENT_PORT,
     healthCheckPath: "/health",
-    desktop: true,
+    desktop: deps.maritime.desktop ?? true,
     externalId: user.id,
     idleTtlSeconds: deps.maritime.idleTtlSeconds ?? DEFAULT_IDLE_TTL_SECONDS,
     instructions: personaFor(user),

@@ -22,6 +22,7 @@ import {
   coreTools,
   ensurePersona,
   loadConfig,
+  ownerClaimStatus,
   syncInstructions,
   loadPolicy,
   resolveDataDir,
@@ -88,6 +89,12 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   const state = new StateDir(resolveDataDir(env));
   state.ensure();
   const config = loadConfig(state, env);
+  if (config.owner.claimOnFirstContact && config.owner.phones.length === 0) {
+    const claim = ownerClaimStatus(config);
+    log(claim.enabled
+      ? `owner claim open: the first 1:1 iMessage/SMS carrying the one-time code becomes the owner${config.owner.claimExpiresAt ? ` (until ${config.owner.claimExpiresAt})` : ""}`
+      : `WARNING: owner claim is disabled: ${claim.reason}. Nobody can claim this agent until a valid code is set`);
+  }
   // PERSONA.md is the owner's file; INSTINCT_PERSONA seeds it on first boot only.
   if (ensurePersona(state, env.INSTINCT_PERSONA)) log(`wrote ${state.path("PERSONA.md")}${env.INSTINCT_PERSONA?.trim() ? " from INSTINCT_PERSONA" : " (default persona)"}`);
   // AGENTS.md is the owner's standing-instructions file. INSTINCT_INSTRUCTIONS seeds it, and a changed seed
