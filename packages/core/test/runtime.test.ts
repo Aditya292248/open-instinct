@@ -245,14 +245,156 @@ describe("AgentRuntime.handleInbound", () => {
     quiet.gate.open();
   });
 
-  it("does not send the same reply twice into one iMessage thread within two minutes", async () => {
-    const h = harness();
-    h.faux.setResponses([textTurn("11:40 AM in Hahn Auditorium."), textTurn("11:40 AM in Hahn Auditorium."), textTurn("Something new")]);
-    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "when is shishir", id: "m1" }));
-    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "when is shishir speaking", id: "m2" }));
-    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "and bret", id: "m3" }));
-    expect(h.sent.map((s) => s.msg.text)).toEqual(["11:40 AM in Hahn Auditorium.", "Something new"]);
-    expect(h.deps.audit.read({ kinds: ["outbound"] }).some((e) => e.detail["skipped"] === "duplicate reply")).toBe(true);
+  it("acks a slow owner text once on the waitForCompletion path, never for the text queued behind it", async () => {
+    const config = testConfig();
+    config.features.ackSlowReplies = true;
+    // The queued text's own turn is slow too, so only the queue rule keeps it from acking.
+    const second = makeGate();
+    const slowToo = defineTool({
+      name: "slow_too",
+      label: "Slow too",
+      description: "waits for a second gate",
+      parameters: Type.Object({}),
+      meta: { capabilities: ["converse"], group: "system" },
+      execute: async () => {
+        await second.promise;
+        return textResult("done too");
+      },
+    });
+    const h = harness({ replyBudgetMs: 30, deps: { config }, extraTools: [slowToo] });
+    h.faux.setResponses([toolTurn("slow", {}), textTurn("Booked the 7pm table."), toolTurn("slow_too", {}), textTurn("And I added it to your calendar.")]);
+    const q1 = h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "book dinner", id: "q1" }), { waitForCompletion: true });
+    await vi.waitFor(() => expect(h.calls.map((c) => c.tool)).toContain("slow"));
+    const q2 = h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "and put it on my calendar", id: "q2" }), { waitForCompletion: true });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h.sent.map((s) => s.msg.text)).toEqual(["On it. I will text you when it is done."]);
+    h.gate.open();
+    await vi.waitFor(() => expect(h.sent).toHaveLength(2));
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h.sent.map((s) => s.msg.text)).toEqual(["On it. I will text you when it is done.", "Booked the 7pm table."]);
+    second.open();
+    await Promise.all([q1, q2]);
+    expect(h.sent.map((s) => s.msg.text)).toEqual(["On it. I will text you when it is done.", "Booked the 7pm table.", "And I added it to your calendar."]);
+  });
+
+  it("does not ack a fast reply, a group text or a contact", async () => {
+    const acking = () => {
+      const config = testConfig();
+      config.features.ackSlowReplies = true;
+      const h = harness({ replyBudgetMs: 30, deps: { config } });
+      h.deps.contacts.upsert({ name: "Sam Lee", tier: "partner", phones: [SAM_PHONE] });
+      return h;
+    };
+    const acks = (h: Harness) => h.sent.map((s) => s.msg.text).filter((t) => t.startsWith("On it"));
+
+    const fast = acking();
+    fast.faux.setResponses([textTurn("Quick answer")]);
+    await fast.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "quick" }), { waitForCompletion: true });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(fast.sent.map((s) => s.msg.text)).toEqual(["Quick answer"]);
+
+    // A turn that ends before the budget with nothing to say leaves no stray ack behind.
+    const silent = acking();
+    silent.faux.setResponses([textTurn("")]);
+    await silent.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: "ok thanks" }), { waitForCompletion: true });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(silent.sent).toHaveLength(0);
+
+    for (const msg of [
+      inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:g", text: "slow", meta: { isGroup: true, participants: [OWNER_PHONE, SAM_PHONE] } }),
+      inbound({ channel: "imessage", from: SAM_PHONE, conversationKey: "imessage:sam", text: "slow" }),
+    ]) {
+      const h = acking();
+      h.faux.setResponses([toolTurn("slow", {}), textTurn("answer")]);
+      const run = h.runtime.handleInbound(msg, { waitForCompletion: true });
+      await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 80));
+      h.gate.open();
+      await run;
+      expect(acks(h)).toEqual([]);
+      expect(h.sent.map((s) => s.msg.text)).toEqual(["answer"]);
+    }
+  });
+
+  describe("duplicate replies in a carrier thread", () => {
+    const text = (id: string, body: string, extra: Partial<InboundMessage> = {}) =>
+      inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:c1", text: body, id, ...extra });
+
+    it("drops the echo when a text queued behind the answer gets the same answer", async () => {
+      const h = harness();
+      h.faux.setResponses([toolTurn("slow", {}), textTurn("11:40 AM in Hahn Auditorium."), textTurn("11:40 AM in Hahn Auditorium.")]);
+      const first = h.runtime.handleInbound(text("m1", "when is shishir"), { waitForCompletion: true });
+      await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+      const second = h.runtime.handleInbound(text("m2", "when is shishir speaking"), { waitForCompletion: true });
+      await flush();
+      h.gate.open();
+      await Promise.all([first, second]);
+      expect(h.sent.map((s) => s.msg.text)).toEqual(["11:40 AM in Hahn Auditorium."]);
+      expect(h.deps.audit.read({ kinds: ["outbound"] }).filter((e) => e.detail["skipped"] === "duplicate reply")).toHaveLength(1);
+    });
+
+    it("delivers the same answer to two separate requests", async () => {
+      const h = harness();
+      h.faux.setResponses([textTurn("Done."), textTurn("Done.")]);
+      await h.runtime.handleInbound(text("m1", "add milk to the list"), { waitForCompletion: true });
+      await h.runtime.handleInbound(text("m2", "add eggs too"), { waitForCompletion: true });
+      expect(h.sent.map((s) => s.msg.text)).toEqual(["Done.", "Done."]);
+    });
+
+    it("always delivers a failure line, even to a queued text", async () => {
+      const h = harness();
+      const fail = () => fauxAssistantMessage([], { stopReason: "error", errorMessage: "rate limited" });
+      h.faux.setResponses([toolTurn("slow", {}), fail(), fail()]);
+      const first = h.runtime.handleInbound(text("m1", "book it"), { waitForCompletion: true });
+      await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+      const second = h.runtime.handleInbound(text("m2", "book it please"), { waitForCompletion: true });
+      await flush();
+      h.gate.open();
+      await Promise.all([first, second]);
+      const snag = "Hit a snag on my end (rate limited). Give me a minute and try that again.";
+      expect(h.sent.map((s) => s.msg.text)).toEqual([snag, snag]);
+
+      // And on a plain retry later.
+      h.faux.setResponses([fail()]);
+      await h.runtime.handleInbound(text("m3", "try again"), { waitForCompletion: true });
+      expect(h.sent.map((s) => s.msg.text)).toEqual([snag, snag, snag]);
+    });
+
+    it("resends an identical reply when the first send failed", async () => {
+      const h = harness();
+      const send = h.deps.outbox.send;
+      let failNext = true;
+      h.deps.outbox.send = async (msg, ctx) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("carrier down");
+        }
+        return send(msg, ctx);
+      };
+      h.faux.setResponses([toolTurn("slow", {}), textTurn("Your table is at 7."), textTurn("Your table is at 7.")]);
+      const first = h.runtime.handleInbound(text("m1", "when is dinner"), { waitForCompletion: true });
+      await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+      const second = h.runtime.handleInbound(text("m2", "dinner time?"), { waitForCompletion: true });
+      await flush();
+      h.gate.open();
+      await expect(first).rejects.toBeInstanceOf(InboundUncertainError);
+      await second;
+      expect(h.sent.map((s) => s.msg.text)).toEqual(["Your table is at 7."]);
+    });
+
+    it("never deduplicates in a group thread", async () => {
+      const h = harness();
+      h.deps.contacts.upsert({ name: "Sam Lee", tier: "partner", phones: [SAM_PHONE] });
+      const meta = { isGroup: true, participants: [OWNER_PHONE, SAM_PHONE] };
+      h.faux.setResponses([toolTurn("slow", {}), textTurn("Sounds good."), textTurn("Sounds good.")]);
+      const first = h.runtime.handleInbound(text("g1", "dinner at 7?", { conversationKey: "imessage:g", meta }), { waitForCompletion: true });
+      await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+      const second = h.runtime.handleInbound(text("g2", "or 7:30?", { conversationKey: "imessage:g", meta }), { waitForCompletion: true });
+      await flush();
+      h.gate.open();
+      await Promise.all([first, second]);
+      expect(h.sent.map((s) => s.msg.text)).toEqual(["Sounds good.", "Sounds good."]);
+    });
   });
 
   it("deduplicates by message id", async () => {
