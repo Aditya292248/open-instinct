@@ -62,6 +62,10 @@ describe("config", () => {
     expect(on.owner.claimOnFirstContact).toBe(true);
     const no = loadConfig(tempState(), { INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT: "0" });
     expect(no.owner.claimOnFirstContact).toBeUndefined();
+    const coded = loadConfig(tempState(), { INSTINCT_CLAIM_OWNER_ON_FIRST_CONTACT: "1", INSTINCT_OWNER_CLAIM_CODE: "  K7P2-QX9M  ", INSTINCT_OWNER_CLAIM_EXPIRES_AT: "2026-11-01T00:00:00Z" });
+    expect(coded.owner.claimCode).toBe("K7P2-QX9M");
+    expect(coded.owner.claimExpiresAt).toBe("2026-11-01T00:00:00Z");
+    expect(on.owner.claimCode).toBeUndefined();
   });
 
   it("ignores an invalid computer mode and fills gaps in a hand-edited file", () => {

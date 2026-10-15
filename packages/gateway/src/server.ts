@@ -50,9 +50,11 @@ export interface GatewayOptions {
   /**
    * Called with every verified, parsed inbound event before it is queued for the
    * agent. A front door can learn the sender's phone from the first message or
-   * keep counters; it must not throw and it cannot change the event.
+   * keep counters. It gets a deep copy, so it cannot change what is relayed. A throw
+   * or a rejected promise is logged and never blocks or crashes the relay; the hook
+   * is not awaited.
    */
-  onInbound?: (user: UserRecord, event: Record<string, unknown>) => void;
+  onInbound?: (user: UserRecord, event: Record<string, unknown>) => void | Promise<void>;
   /** Ask Maritime for the agent's state before every relay (true), never (false), or only for agents under 15 minutes old (default). */
   checkAgentStatus?: boolean;
 }
@@ -310,10 +312,14 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
     } catch {
       return json(res, 400, { error: "expected a webhook event with an id" });
     }
-    try {
-      opts.onInbound?.(user, event);
-    } catch (err) {
-      log.warn("webhook.on_inbound_failed", { userId, error: err instanceof Error ? err.message : String(err) });
+    if (opts.onInbound) {
+      const hookFailed = (err: unknown) => log.warn("webhook.on_inbound_failed", { userId, error: err instanceof Error ? err.message : String(err) });
+      try {
+        const pending = opts.onInbound(structuredClone(user), structuredClone(event));
+        if (pending && typeof (pending as Promise<void>).then === "function") (pending as Promise<void>).then(undefined, hookFailed);
+      } catch (err) {
+        hookFailed(err);
+      }
     }
     inbox.enqueue(`${user.id}:${event.id}`, { userId: user.id, identityId: user.identityId, event });
     res.writeHead(204);

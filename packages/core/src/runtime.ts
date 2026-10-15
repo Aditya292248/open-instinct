@@ -22,6 +22,7 @@ import { OwnerNotifier } from "./notifier.js";
 import { DEFAULT_TIER_TABLE, SPEND_CAPABILITIES, type PolicyEngine } from "./policy.js";
 import { looksLikePhone, normalizePhone, resolvePrincipal } from "./principal.js";
 import { saveConfig } from "./config.js";
+import { CLAIM_WELCOME_TEXT, MAX_CLAIM_ATTEMPTS, matchClaimCode, ownerClaimStatus } from "./owner-claim.js";
 import { readAgentsInstructions, readPersona } from "./persona.js";
 import { buildSystemPrompt, wrapUntrusted } from "./prompt.js";
 import { A2AStore, a2aState, a2aTerminal } from "./a2a-state.js";
@@ -104,6 +105,7 @@ const APPROVAL_CHANNELS: ReadonlySet<Channel> = new Set(["imessage", "sms", "cha
 const CHANNELS: ReadonlySet<string> = new Set(["imessage", "sms", "email", "a2a", "chat", "scheduled", "system"]);
 const REPLY_TOOL = "reply_instinct";
 const PROCESSING_FILE = "processing-events.json";
+const CLAIM_ATTEMPTS_FILE = "owner-claim-attempts.json";
 
 /** Work may already have caused an external effect; automatic replay is not safe. */
 export class InboundUncertainError extends Error {
@@ -358,10 +360,10 @@ export class AgentRuntime {
     return conv;
   }
 
-  async handleInbound(msg: InboundMessage, opts: { waitForCompletion?: boolean } = {}): Promise<HandleResult> {
-    this.maybeClaimOwner(msg);
+  async handleInbound(incoming: InboundMessage, opts: { waitForCompletion?: boolean } = {}): Promise<HandleResult> {
+    let msg = incoming;
     const originalPrincipal = resolvePrincipal(msg, this.deps.config, this.deps.contacts);
-    const base = { principal: originalPrincipal, conversationKey: msg.conversationKey, acked: true as const };
+    let base = { principal: originalPrincipal, conversationKey: msg.conversationKey, acked: true as const };
     if (this.seenBefore(msg.id)) return { ...base, blocked: "duplicate" };
     if (msg.channel === "a2a" && msg.meta?.eventType === "a2a.task.canceled") {
       this.cancelA2A(msg);
@@ -370,6 +372,12 @@ export class AgentRuntime {
     }
     let run = this.inboundRuns.get(msg.id);
     if (!run) {
+      // Only a new, not-yet-seen message with a resolved 1:1 scope may claim the owner seat.
+      const claimed = this.maybeClaimOwner(msg);
+      if (claimed) {
+        msg = claimed;
+        base = { ...base, principal: resolvePrincipal(msg, this.deps.config, this.deps.contacts) };
+      }
       run = this.processInbound(msg);
       this.inboundRuns.set(msg.id, run);
       void run.finally(() => this.inboundRuns.delete(msg.id)).catch(() => undefined);
@@ -386,28 +394,51 @@ export class AgentRuntime {
 
   /**
    * An agent handed out before its owner's phone was known (config.owner.claimOnFirstContact
-   * with no phones) adopts the first person who texts it 1:1 on a carrier channel. The claim
-   * is written to config.json and the flag is cleared, so it happens exactly once. Group
-   * threads, email and A2A never claim: a carrier-bound 1:1 sender is the only proof we take.
+   * with no phones) adopts the first person who texts it 1:1 on a carrier channel a message
+   * containing the one-time claim code (owner-claim.ts). No valid code configured means no
+   * claim at all. Group threads, unresolved scopes, reactions, email and A2A never claim. A
+   * wrong code leaves the sender an ordinary stranger and does not use up the claim, but each
+   * number gets only MAX_CLAIM_ATTEMPTS tries. On success the phone is written to config.json,
+   * the flag and the code are cleared so they cannot be reused, and the returned message has
+   * the code stripped so it never reaches the model or the transcript.
    */
-  private maybeClaimOwner(msg: InboundMessage): void {
-    const owner = this.deps.config.owner;
-    if (!owner.claimOnFirstContact || owner.phones.length > 0) return;
-    if (msg.channel !== "imessage" && msg.channel !== "sms") return;
-    if (isGroup(msg)) return;
+  private maybeClaimOwner(msg: InboundMessage): InboundMessage | undefined {
+    const { config, state, audit } = this.deps;
+    const owner = config.owner;
+    if (!owner.claimOnFirstContact || owner.phones.length > 0) return undefined;
+    if (msg.channel !== "imessage" && msg.channel !== "sms") return undefined;
+    if (msg.meta?.conversationScopeKnown !== true || isGroup(msg)) return undefined;
+    if (msg.meta?.reaction !== undefined) return undefined;
     const from = (msg.from ?? "").trim();
-    if (!looksLikePhone(from)) return;
+    if (!looksLikePhone(from)) return undefined;
     const phone = normalizePhone(from);
-    if (!phone) return;
+    if (!phone) return undefined;
+    const status = ownerClaimStatus(config, this.now());
+    if (!status.enabled) return undefined;
+    const attempts = state.readJson<Record<string, number>>(CLAIM_ATTEMPTS_FILE, {});
+    if ((attempts[phone] ?? 0) >= MAX_CLAIM_ATTEMPTS) return undefined;
+    const match = matchClaimCode(msg.text, status.code);
+    if (!match.matched) {
+      attempts[phone] = (attempts[phone] ?? 0) + 1;
+      state.writeJson(CLAIM_ATTEMPTS_FILE, attempts);
+      if (attempts[phone] === MAX_CLAIM_ATTEMPTS) {
+        audit.append({ kind: "policy", conversationKey: msg.conversationKey, principal: `stranger:${msg.channel}:${phone}`, detail: { ownerClaimLocked: true, channel: msg.channel, phone } });
+      }
+      return undefined;
+    }
     owner.phones = [phone];
     owner.claimOnFirstContact = false;
-    saveConfig(this.deps.state, this.deps.config);
-    this.deps.audit.append({
+    delete owner.claimCode;
+    delete owner.claimExpiresAt;
+    saveConfig(state, config);
+    state.writeJson(CLAIM_ATTEMPTS_FILE, {});
+    audit.append({
       kind: "policy",
       conversationKey: msg.conversationKey,
       principal: "owner",
       detail: { ownerClaimed: true, channel: msg.channel, phone },
     });
+    return { ...msg, text: match.rest || CLAIM_WELCOME_TEXT };
   }
 
   private async processInbound(original: InboundMessage): Promise<HandleResult> {

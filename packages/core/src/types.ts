@@ -233,9 +233,15 @@ export interface OwnerProfile {
   /**
    * The agent was handed out before its owner's phone was known (a signup form
    * that asked only for a name). While `phones` is empty, the first person who
-   * texts it 1:1 on iMessage or SMS becomes the owner and this flag is cleared.
+   * texts it 1:1 on iMessage or SMS a message containing `claimCode` becomes the
+   * owner, and this flag and the code are cleared. Without a valid `claimCode`
+   * nobody can claim (fail closed).
    */
   claimOnFirstContact?: boolean;
+  /** One-time code the front door gives only to the person who signed up. See owner-claim.ts. */
+  claimCode?: string;
+  /** ISO time after which `claimCode` no longer works. Optional. */
+  claimExpiresAt?: string;
 }
 
 export interface InstinctConfig {

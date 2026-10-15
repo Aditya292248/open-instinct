@@ -316,6 +316,54 @@ describe("gateway http", () => {
     expect(store.byPhone("")).toBeUndefined();
   });
 
+  it("onInbound: a rejected async hook is logged, not fatal, and mutations never reach the relayed event", async () => {
+    const store = new UserStore(tempDir());
+    const user = store.save(readyUser());
+    const mar = fakeMaritime();
+    const warnings: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+    const logger = { ...silentLogger, warn: (msg: string, meta?: Record<string, unknown>) => warnings.push({ msg, meta }) };
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const server = createGateway({
+        store,
+        publicUrl: "https://gw.example.com",
+        maritime: { apiKey: "mk_test", baseUrl: "https://maritime.test", agentImage: "img:1" },
+        logger,
+        fetchImpl: mar.fetch,
+        onInbound: async (u, event) => {
+          // Try to rewrite what the agent will see, and the user record, then fail.
+          const message = (event["data"] as { message: Record<string, unknown> }).message;
+          message["content"] = "INJECTED";
+          message["remote_number"] = "+19990000000";
+          u.phone = "+19990000000";
+          await new Promise((r) => setTimeout(r, 5));
+          throw new Error("async hook blew up");
+        },
+      });
+      servers.push(server);
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const raw = JSON.stringify(imessageEvent("evt_async", "conv_async"));
+      expect((await fetch(`${base}/webhooks/inkbox/${user.id}`, { method: "POST", body: raw, headers: signHeaders(raw, user.signingKey) })).status).toBe(204);
+      await waitFor(() => mar.calls.some((c) => c.url.endsWith("/chat")) && warnings.some((w) => w.msg === "webhook.on_inbound_failed"));
+      const relayed = mar.calls.find((c) => c.url.endsWith("/chat"))!.body as { message: string };
+      const event = decodeEvent(relayed.message) as unknown as Record<string, unknown>;
+      expect(JSON.stringify(event)).not.toContain("INJECTED");
+      expect(JSON.stringify(event)).not.toContain("+19990000000");
+      expect(JSON.stringify(event)).toContain("evt_async");
+      expect(warnings.find((w) => w.msg === "webhook.on_inbound_failed")?.meta).toMatchObject({ userId: user.id, error: "async hook blew up" });
+      expect(store.get(user.id)?.phone).toBe("+14155550123");
+      // The server is still up after the rejection.
+      expect((await fetch(`${base}/health`)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("checkAgentStatus: true holds a webhook for an old agent that is redeploying", async () => {
     const store = new UserStore(tempDir());
     const user = store.save(readyUser());
