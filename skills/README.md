@@ -25,6 +25,7 @@ skills/
   daily-brief/SKILL.md
   trusted-network/SKILL.md
   maritime-computer/SKILL.md
+  maritime/SKILL.md
   web-apps/SKILL.md
 ```
 

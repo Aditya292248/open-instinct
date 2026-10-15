@@ -11,9 +11,9 @@
 export type PrincipalKind = "owner" | "contact" | "agent" | "stranger";
 
 /** Trust tiers, highest first. See docs/PERMISSIONS.md. */
-export type Tier = "owner" | "partner" | "family" | "friend" | "contact" | "stranger";
+export type Tier = "owner" | "staff" | "partner" | "family" | "friend" | "contact" | "stranger";
 
-export const TIER_ORDER: readonly Tier[] = ["owner", "partner", "family", "friend", "contact", "stranger"];
+export const TIER_ORDER: readonly Tier[] = ["owner", "staff", "partner", "family", "friend", "contact", "stranger"];
 
 export interface Principal {
   kind: PrincipalKind;
@@ -239,7 +239,13 @@ export interface InstinctConfig {
   model: { primary: string; fallback?: string; cheap?: string; thinking?: "off" | "minimal" | "low" | "medium" | "high" };
   computer: { mode: "auto" | "desktopd" | "maritime" | "none"; desktopdUrl?: string; maritimeMcpUrl?: string };
   apps: { enabled: boolean; toolkits: string[] };
-  features: { typingIndicators: boolean; tapbacks: boolean; journal: boolean };
+  features: {
+    typingIndicators: boolean;
+    tapbacks: boolean;
+    journal: boolean;
+    /** Text a one-line "on it" on iMessage/SMS when a reply passes the budget, instead of silence until it is done. */
+    ackSlowReplies?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -5,8 +5,8 @@ export { InkboxInboundHydrator, INBOUND_ATTACHMENT_BYTES, INBOUND_ATTACHMENT_LIM
 export type { HydrationOptions } from "./hydration.js";
 export { verifyInkboxSignature, computeInkboxSignature, parseWebhookTimestamp } from "./signature.js";
 export type { VerifyOptions } from "./signature.js";
-export { InkboxProvisioner, InkboxPlanLimitError, DEFAULT_WEBHOOK_EVENTS } from "./provisioner.js";
-export type { ProvisionedIdentity, ProvisionInput } from "./provisioner.js";
+export { InkboxProvisioner, InkboxPlanLimitError, InkboxConnectError, DEFAULT_WEBHOOK_EVENTS, CONNECT_FIRST_MESSAGE_MAX } from "./provisioner.js";
+export type { ProvisionedIdentity, ProvisionInput, ConnectRecipientInput, ConnectRecipientResult } from "./provisioner.js";
 export { InkboxA2A, A2ARpcError, a2aParts, summarizeSendResult } from "./a2a.js";
 export type { A2AIntent, A2ASendResult } from "./a2a.js";
 export { messagingTools, sendFileTool, resolveTarget, resolveFilePath, mimeTypeFor, maritimeFileFence } from "./tools.js";
