@@ -16,9 +16,9 @@ It writes real files, too: ask for a brief "as a PDF" and it creates one in its 
 
 ## Who gets which key
 
-<p align="center"><img src="docs/assets/brand/trust.png" alt="Six rings: owner, partner, family, friend, contact, stranger" width="820"></p>
+<p align="center"><img src="docs/assets/brand/trust.png" alt="Rings of trust: owner, staff, partner, family, friend, contact, stranger" width="820"></p>
 
-Six tiers, enforced in code before any tool runs. Your partner's agent can read your calendar. A friend's can only ask when you are free. A stranger gets a polite no, and you get a one-line text saying who asked for what. Grants add exceptions in plain English: "Sam can book us dinner this week." Details in [PERMISSIONS.md](docs/PERMISSIONS.md) and [PROTOCOL.md](docs/PROTOCOL.md).
+Seven tiers, enforced in code before any tool runs. `staff` is for your own agents working as a team. Your partner's agent can read your calendar. A friend's can only ask when you are free. A stranger gets a polite no, and you get a one-line text saying who asked for what. Grants add exceptions in plain English: "Sam can book us dinner this week." Details in [PERMISSIONS.md](docs/PERMISSIONS.md) and [PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Payments
 

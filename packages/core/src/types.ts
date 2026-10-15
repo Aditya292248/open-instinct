@@ -11,9 +11,9 @@
 export type PrincipalKind = "owner" | "contact" | "agent" | "stranger";
 
 /** Trust tiers, highest first. See docs/PERMISSIONS.md. */
-export type Tier = "owner" | "partner" | "family" | "friend" | "contact" | "stranger";
+export type Tier = "owner" | "staff" | "partner" | "family" | "friend" | "contact" | "stranger";
 
-export const TIER_ORDER: readonly Tier[] = ["owner", "partner", "family", "friend", "contact", "stranger"];
+export const TIER_ORDER: readonly Tier[] = ["owner", "staff", "partner", "family", "friend", "contact", "stranger"];
 
 export interface Principal {
   kind: PrincipalKind;

@@ -104,7 +104,7 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   });
   const approvals = new ApprovalStore(state);
   const scheduler = new Scheduler(state);
-  const contacts = new ContactStore(state);
+  const contacts = new ContactStore(state, { warn: log });
   const memory = new MemoryStore(state);
   const a2aStore = new A2AStore(state);
 
