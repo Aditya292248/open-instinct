@@ -4,6 +4,7 @@
  * configured. Everything it builds is returned so main.ts, the smoke test and
  * embedders can drive it the same way.
  */
+import { resolve } from "node:path";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Model } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
@@ -26,7 +27,7 @@ import {
   resolveDataDir,
   resolveModel,
 } from "@open-instinct/core";
-import type { InboundMessage, InstinctConfig, Outbox, RegisteredTool } from "@open-instinct/core";
+import type { InboundMessage, InstinctConfig, Outbox, Principal, RegisteredTool } from "@open-instinct/core";
 import { InkboxA2A, InkboxChannel, InkboxInboundHydrator, InkboxProvisioner, messagingTools, sendFileTool } from "@open-instinct/inkbox";
 import { computerGuidance, detectComputer } from "@open-instinct/computer";
 import type { ComputerBackend } from "@open-instinct/computer";
@@ -40,7 +41,7 @@ import { describeDataPart, promptExtraFor } from "./hooks.js";
 import { appsNotConfiguredTool, setupSummaryFor } from "./setup-summary.js";
 import { createScheduleSync, type ScheduleSync } from "./maritime-schedules.js";
 import { loadPaymentsModule, paymentsEnv, type LinkWalletLike, type PaymentsModule } from "./payments.js";
-import { formatSkillsIndex, loadSkillList, loadSkillTool, ownerSkillsDir, resolveSkillsDir } from "./skills.js";
+import { createSkillCatalog, formatSkillsIndex, loadSkillTool, ownerSkillsDir, resolveSkillsDir, skillsFor } from "./skills.js";
 
 /** How often the skill folders are re-read; an owner-installed skill shows up within this. */
 const SKILLS_REFRESH_MS = 30_000;
@@ -334,20 +335,22 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   const skillsDir = resolveSkillsDir({ explicit: opts.skillsDir, env, packageUrl: import.meta.url });
   // The image's skills/ first, then the owner's <data>/skills. Skills are re-read every 30 s, so one
   // installed there after boot (a git clone, a SKILL.md the agent wrote) is in the index and loadable
-  // by name on the owner's next message, and overrides a built-in of the same name.
-  const skillDirs = [skillsDir, ownerSkillsDir(state.root)].filter((d): d is string => Boolean(d));
-  let skillsCache: { at: number; list: ReturnType<typeof loadSkillList> } | undefined;
-  const skillList = () => {
-    const at = Date.now();
-    if (!skillsCache || at - skillsCache.at > SKILLS_REFRESH_MS) skillsCache = { at, list: loadSkillList(skillDirs, skillsCache ? undefined : log) };
-    return skillsCache.list;
-  };
-  skillList();
+  // by name on the next message. Built-ins win a name clash, and an owner skill is private (only the
+  // owner sees or loads it) unless its frontmatter says `visibility: public`.
+  const ownerDir = ownerSkillsDir(state.root);
+  const skillCatalog = createSkillCatalog({
+    builtinDirs: skillsDir && resolve(skillsDir) !== resolve(ownerDir) ? skillsDir : undefined,
+    ownerDir,
+    log,
+    refreshMs: SKILLS_REFRESH_MS,
+  });
+  skillCatalog.list();
   // Registered even with no skill yet, and even when every skill is hidden: those load by name.
-  registry.register(loadSkillTool(skillList));
+  registry.register(loadSkillTool(skillCatalog.list));
   const staticSections = promptSections.join("\n\n");
-  const skillsPrompt = () => {
-    const parts = [staticSections, formatSkillsIndex(skillList())].filter((p): p is string => Boolean(p && p.trim()));
+  // Built per conversation, so each principal's index lists only the skills they may load.
+  const skillsPrompt = (principal: Principal) => {
+    const parts = [staticSections, formatSkillsIndex(skillsFor(skillCatalog.list(), principal))].filter((p): p is string => Boolean(p && p.trim()));
     return parts.length > 0 ? parts.join("\n\n") : undefined;
   };
 
