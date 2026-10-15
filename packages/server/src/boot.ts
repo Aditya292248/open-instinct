@@ -21,6 +21,7 @@ import {
   coreTools,
   ensurePersona,
   loadConfig,
+  syncInstructions,
   loadPolicy,
   resolveDataDir,
   resolveModel,
@@ -85,6 +86,10 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   const config = loadConfig(state, env);
   // PERSONA.md is the owner's file; INSTINCT_PERSONA seeds it on first boot only.
   if (ensurePersona(state, env.INSTINCT_PERSONA)) log(`wrote ${state.path("PERSONA.md")}${env.INSTINCT_PERSONA?.trim() ? " from INSTINCT_PERSONA" : " (default persona)"}`);
+  // AGENTS.md is the owner's standing-instructions file. INSTINCT_INSTRUCTIONS seeds it, and a changed seed
+  // replaces it as long as the owner never edited the file; an edited file is theirs.
+  const instructions = syncInstructions(state, env.INSTINCT_INSTRUCTIONS);
+  if (instructions === "created" || instructions === "updated") log(`${instructions} ${state.path("AGENTS.md")} from INSTINCT_INSTRUCTIONS`);
 
   const audit = new AuditLog(state);
   const policy = new PolicyEngine(loadPolicy(state), {
@@ -150,6 +155,17 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       outbox,
       workspaceDir: state.path("workspace"),
       onApprovalSettled: (approval, approved) => runtime.afterApproval(approval, approved),
+      // Image generation rides on an OpenAI-compatible key: a dedicated IMAGE_API_KEY, else the model key
+      // (an OpenAI-compatible proxy that forwards /images/generations works too). The shell never sees either.
+      ...(env.IMAGE_API_KEY || env.OPENAI_API_KEY
+        ? {
+            images: {
+              apiKey: (env.IMAGE_API_KEY || env.OPENAI_API_KEY) as string,
+              ...(env.IMAGE_BASE_URL || env.OPENAI_BASE_URL ? { baseUrl: env.IMAGE_BASE_URL || env.OPENAI_BASE_URL } : {}),
+              ...(env.IMAGE_MODEL ? { model: env.IMAGE_MODEL } : {}),
+            },
+          }
+        : {}),
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       ...(env.BRAVE_SEARCH_API_KEY ? { searchApiKey: env.BRAVE_SEARCH_API_KEY } : {}),
     }),
