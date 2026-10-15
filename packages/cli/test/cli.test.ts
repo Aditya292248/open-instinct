@@ -264,6 +264,25 @@ describe("chat", () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain("asleep");
   });
+
+  it("sends INSTINCT_CHAT_TOKEN as a Bearer header on chat and status, and explains a 401", async () => {
+    const { fetch, calls } = fakeFetch({
+      "http://127.0.0.1:8080/chat": () => json({ response: "ok" }),
+      "http://127.0.0.1:8080/": () => json({ ok: true }),
+    });
+    const env = { INSTINCT_DATA_DIR: tmpDir(), INSTINCT_CHAT_TOKEN: "tok_1" };
+    expect((await run(["chat", "ping"], env, { fetchImpl: fetch })).code).toBe(0);
+    expect((await run(["status"], env, { fetchImpl: fetch })).code).toBe(0);
+    for (const c of calls) expect((c.init.headers as Record<string, string>).Authorization).toBe("Bearer tok_1");
+
+    const locked = fakeFetch({ "http://127.0.0.1:8080/chat": () => json({ error: "missing or invalid token" }, 401), "http://127.0.0.1:8080/": () => json({}, 401) });
+    const chat = await run(["chat", "ping"], { INSTINCT_DATA_DIR: tmpDir() }, { fetchImpl: locked.fetch });
+    expect(chat.code).toBe(1);
+    expect(chat.err).toContain("INSTINCT_CHAT_TOKEN");
+    const status = await run(["status"], { INSTINCT_DATA_DIR: tmpDir() }, { fetchImpl: locked.fetch });
+    expect(status.code).toBe(1);
+    expect(status.err).toContain("INSTINCT_CHAT_TOKEN");
+  });
 });
 
 describe("status", () => {
@@ -288,7 +307,14 @@ describe("deploy", () => {
 
   it("--dry-run prints the create body with secrets redacted", async () => {
     const dir = await seeded();
-    const r = await run(["deploy", "--image", "ghcr.io/maria/open-instinct-agent:v1", "--dry-run"], { INSTINCT_DATA_DIR: dir, ANTHROPIC_API_KEY: "sk-ant-x" });
+    const r = await run(["deploy", "--image", "ghcr.io/maria/open-instinct-agent:v1", "--dry-run"], {
+      INSTINCT_DATA_DIR: dir,
+      ANTHROPIC_API_KEY: "sk-ant-x",
+      CONTEXT_DEV_API_KEY: "ctxt_secret_test",
+      AMPLE_CLIENT_ID: "agent_test",
+      AMPLE_CLIENT_SECRET: "ample_agent_secret_test",
+      COMPOSIO_MODE: "router",
+    });
     expect(r.code, r.err).toBe(0);
     const body = JSON.parse(r.out);
     expect(body.name).toBe("instinct-maria-instinct");
@@ -304,11 +330,17 @@ describe("deploy", () => {
     expect(vars.PORT).toEqual({ key: "PORT", value: String(body.exposedPort), isSecret: false });
     expect(vars.INKBOX_API_KEY).toEqual({ key: "INKBOX_API_KEY", value: "<redacted>", isSecret: true });
     expect(vars.ANTHROPIC_API_KEY.value).toBe("<redacted>");
+    expect(vars.CONTEXT_DEV_API_KEY.value).toBe("<redacted>");
+    expect(vars.AMPLE_CLIENT_ID).toEqual({ key: "AMPLE_CLIENT_ID", value: "agent_test", isSecret: false });
+    expect(vars.AMPLE_CLIENT_SECRET.value).toBe("<redacted>");
+    expect(vars.AMPLE_TOKEN).toBeUndefined();
+    expect(vars.COMPOSIO_MODE).toEqual({ key: "COMPOSIO_MODE", value: "router", isSecret: false });
     expect(vars.INSTINCT_OWNER_PHONE).toEqual({ key: "INSTINCT_OWNER_PHONE", value: "+14155550100", isSecret: false });
     expect(vars.INSTINCT_DATA_DIR.value).toBe("/data");
     expect(vars.INSTINCT_MODEL.value).toBe("anthropic/claude-fable-5-1");
     expect(vars.LINK_CLIENT_ID).toBeUndefined();
     expect(r.out).not.toContain("ik_secret");
+    expect(r.out).not.toContain("ample_agent_secret_test");
   });
 
   it("keeps the Inkbox endpoint with the deployed identity credentials", async () => {

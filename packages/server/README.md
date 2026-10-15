@@ -35,7 +35,9 @@ text is sent through the outbox when the run finishes. Nothing is lost.
 | GET | `/health` | open | `{ ok: true }` |
 | GET | `/` or `/status` | token | agent name, handle, model, conversations, busy, computer kind, connected apps, uptime, `pendingReplies` per chat conversation, `payments.connected` when Link is configured |
 | GET | `/schedules` | token | the schedule list in Maritime's shape |
-| POST | `/chat` | token | Four cases, in this order. (1) `message` starts with `@@instinct-event@@` and the event is `{ type: "link.oauth_callback", code, state }`: the Link wallet handshake is completed, `response` is `""`. (2) Any other envelope is an Inkbox event relayed by the gateway: parsed, handled, reply sent through Inkbox, `response` is `""`. (3) `source` is `"scheduled"`: a Maritime schedule wake, see below. (4) Otherwise the owner is talking on `chat:<conversation_id ?? "default">` and the reply comes back in `response`; replies the runtime finished after an earlier ack on that conversation come back in `pending`. |
+| GET | `/oauth/link/start` | token | `{ url }`: a fresh Link authorize URL; the server keeps the PKCE verifier. 404 without payments. Used by `instinct payments connect` |
+| GET | `/payments/status` | token | `{ connected }`. 404 without payments. Used by `instinct payments status` |
+| POST | `/chat` | token | Four cases, in this order. (1) `message` starts with `@@instinct-event@@` and the event is `{ type: "link.oauth_callback", code, state }`: the Link wallet handshake is completed, `response` is `""`. (2) The event is `{ type: "system.task", id, prompt, name?, quiet? }`: a task from whoever operates the agent (a front door that wants research done before the first text, a one-off reminder). It runs as the owner on `system:<id>` past the HTTP budget; the result is texted to the owner unless `quiet` is true, and `response` is `""` with `conversationKey` set. A runtime without `runSystemTask` answers `blocked`. (3) Any other envelope is an Inkbox event relayed by the gateway: parsed, handled, reply sent through Inkbox, `response` is `""`. (4) `source` is `"scheduled"`: a Maritime schedule wake, see below. (5) Otherwise the owner is talking on `chat:<conversation_id ?? "default">` and the reply comes back in `response`; replies the runtime finished after an earlier ack on that conversation come back in `pending`. |
 | GET | `/oauth/link/callback?code&state` | open | Stripe Link redirects the owner here after they approve the wallet. Completes `wallet.handleCallback` and renders a small "Connected" page. 404 page when payments are not configured, 400 page on a missing code/state, a Link `error`, or a state mismatch. |
 | POST | `/webhooks/inkbox` | signature | Raw body. Verifies `X-Inkbox-Signature` (HMAC-SHA256 over `request_id.timestamp.body`, 5 min window). 503 when no signing key is configured, 401 when invalid, else 204 at once and the event is handled in the background. |
 
@@ -90,7 +92,7 @@ Only `server`, `gateway` and `cli` read `process.env`. Full list with comments:
 |---|---|
 | `INSTINCT_DATA_DIR` | state root; default `/data` if it exists, else `./.instinct` |
 | `INSTINCT_MODEL` | `provider/model`; default `anthropic/claude-fable-5-1`; `openai-compatible/<id>` uses `OPENAI_BASE_URL` |
-| `INSTINCT_OWNER_NAME/PHONE/EMAIL`, `INSTINCT_TIMEZONE`, `INSTINCT_AGENT_NAME` | seed `config.json` on first boot |
+| `INSTINCT_OWNER_NAME/PHONE/EMAIL/TIMEZONE`, `INSTINCT_AGENT_NAME` | seed `config.json` on first boot |
 | `INKBOX_API_KEY` + `INKBOX_AGENT_HANDLE` (+ `INKBOX_IDENTITY_ID`) | outbox becomes Inkbox; messaging tools and A2A appear |
 | `INKBOX_SIGNING_KEY` | webhook verification (also read from `<data>/secrets/webhook.json`) |
 | `INKBOX_ADMIN_API_KEY` | invitations and contact rules; with the tunnel, auto-subscribes the webhook |

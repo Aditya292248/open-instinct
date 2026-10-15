@@ -21,6 +21,7 @@ import {
   coreTools,
   ensurePersona,
   loadConfig,
+  syncInstructions,
   loadPolicy,
   resolveDataDir,
   resolveModel,
@@ -29,15 +30,17 @@ import type { InboundMessage, InstinctConfig, Outbox, RegisteredTool } from "@op
 import { InkboxA2A, InkboxChannel, InkboxInboundHydrator, InkboxProvisioner, messagingTools, sendFileTool } from "@open-instinct/inkbox";
 import { computerGuidance, detectComputer } from "@open-instinct/computer";
 import type { ComputerBackend } from "@open-instinct/computer";
-import { ComposioApps, DEFAULT_TOOLKITS, appsGuidance, appsTools } from "@open-instinct/apps";
+import { ComposioApps, DEFAULT_TOOLKITS, OPENAI_COMPLETIONS_TOOL_LIMIT, appsGuidance, appsTools, composioModeFor } from "@open-instinct/apps";
+import { ampleTools, type AmpleCredentials } from "@open-instinct/ample";
+import { contextTools } from "@open-instinct/context";
 import { networkTools } from "@open-instinct/network";
 import { ChatAwareOutbox, ConsoleOutbox, type ChatReplyBuffer } from "./console-outbox.js";
-import { fileTools } from "./file-tools.js";
+import { fileTools, resolveInsideWorkspace } from "./file-tools.js";
 import { describeDataPart, promptExtraFor } from "./hooks.js";
 import { appsNotConfiguredTool, setupSummaryFor } from "./setup-summary.js";
 import { createScheduleSync, type ScheduleSync } from "./maritime-schedules.js";
 import { loadPaymentsModule, paymentsEnv, type LinkWalletLike, type PaymentsModule } from "./payments.js";
-import { loadSkillsPrompt, resolveSkillsDir } from "./skills.js";
+import { formatSkillsIndex, loadSkillList, loadSkillTool, resolveSkillsDir } from "./skills.js";
 
 export interface BootOptions {
   streamFn?: StreamFn;
@@ -83,6 +86,10 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   const config = loadConfig(state, env);
   // PERSONA.md is the owner's file; INSTINCT_PERSONA seeds it on first boot only.
   if (ensurePersona(state, env.INSTINCT_PERSONA)) log(`wrote ${state.path("PERSONA.md")}${env.INSTINCT_PERSONA?.trim() ? " from INSTINCT_PERSONA" : " (default persona)"}`);
+  // AGENTS.md is the owner's standing-instructions file. INSTINCT_INSTRUCTIONS seeds it, and a changed seed
+  // replaces it as long as the owner never edited the file; an edited file is theirs.
+  const instructions = syncInstructions(state, env.INSTINCT_INSTRUCTIONS);
+  if (instructions === "created" || instructions === "updated") log(`${instructions} ${state.path("AGENTS.md")} from INSTINCT_INSTRUCTIONS`);
 
   const audit = new AuditLog(state);
   const policy = new PolicyEngine(loadPolicy(state), {
@@ -147,10 +154,31 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       config,
       outbox,
       workspaceDir: state.path("workspace"),
+      onApprovalSettled: (approval, approved) => runtime.afterApproval(approval, approved),
+      // Image generation rides on an OpenAI-compatible key: a dedicated IMAGE_API_KEY, else the model key
+      // (an OpenAI-compatible proxy that forwards /images/generations works too). The shell never sees either.
+      ...(env.IMAGE_API_KEY || env.OPENAI_API_KEY
+        ? {
+            images: {
+              apiKey: (env.IMAGE_API_KEY || env.OPENAI_API_KEY) as string,
+              ...(env.IMAGE_BASE_URL || env.OPENAI_BASE_URL ? { baseUrl: env.IMAGE_BASE_URL || env.OPENAI_BASE_URL } : {}),
+              ...(env.IMAGE_MODEL ? { model: env.IMAGE_MODEL } : {}),
+            },
+          }
+        : {}),
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       ...(env.BRAVE_SEARCH_API_KEY ? { searchApiKey: env.BRAVE_SEARCH_API_KEY } : {}),
     }),
   );
+
+  if (env.CONTEXT_DEV_API_KEY) {
+    registry.registerMany(
+      contextTools({
+        apiKey: env.CONTEXT_DEV_API_KEY,
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      }),
+    );
+  }
 
   // Messaging needs Inkbox. send_file does not: without a wire it still hands files
   // to the dashboard chat, which is how `instinct chat` and the smoke test get them.
@@ -163,6 +191,36 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   }) : undefined;
 
   registry.registerMany(fileTools(state.path("workspace"), { env }));
+
+  // Web app deploys through Ample: with the deployer's credential, or with an
+  // account this agent signs up for itself on the first deploy (AMPLE_SIGNUP=1),
+  // which is how every person behind a shared gateway gets an account of their own.
+  const ample = ampleCredentials(env);
+  const ampleSignup = !ample && env.AMPLE_SIGNUP === "1";
+  if (ample || ampleSignup) {
+    const workspace = state.path("workspace");
+    const ownerEmail = config.owner.emails[0];
+    registry.registerMany(
+      ampleTools({
+        ...(ample
+          ? { credentials: ample }
+          : {
+              signup: {
+                file: state.path("secrets", "ample.json"),
+                name: `open-instinct-${config.agent.handle ?? "agent"}`,
+                ...(ownerEmail ? { ownerEmail } : {}),
+              },
+            }),
+        workspaceDir: workspace,
+        resolvePath: (requested) => resolveInsideWorkspace(workspace, requested),
+        env,
+        ...(env.AMPLE_API_URL ? { apiUrl: env.AMPLE_API_URL } : {}),
+        ...(env.AMPLE_BIN ? { bin: env.AMPLE_BIN } : {}),
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      }),
+    );
+    log(`ample: web app deploys on (${ample ? "shared credential" : "own account on first deploy"})`);
+  }
 
   // Computer: in-VM desktopd, hosted Maritime Computers MCP, or nothing.
   const computer = await safely(log, "computer", () =>
@@ -195,7 +253,11 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   let appsConnected: string[] | undefined;
   if (env.COMPOSIO_API_KEY) {
     const toolkits = config.apps.toolkits.length > 0 ? config.apps.toolkits : DEFAULT_TOOLKITS;
-    const composio = new ComposioApps({ apiKey: env.COMPOSIO_API_KEY, userId: externalUserId, toolkits, state, logger: log });
+    // Direct mode lists one tool per app action; router mode lists Composio's meta tools only.
+    // OpenAI-style chat completions (the Maritime LLM proxy) cap a request at 128 tools.
+    const { mode, reason } = composioModeFor(env, model.api);
+    const composio = new ComposioApps({ apiKey: env.COMPOSIO_API_KEY, userId: externalUserId, toolkits, mode, state, logger: log });
+    log(`apps: composio ${composio.mode} mode (${composio.allToolkits ? "all toolkits always use router" : reason})`);
     const connected = await safely(log, "apps", async () => {
       await composio.connect();
       const tools = await composio.tools();
@@ -209,7 +271,7 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
       const on = connected.status.filter((s: ToolkitStatus) => s.connected).map((s: ToolkitStatus) => s.slug);
       const missing = connected.status.filter((s: ToolkitStatus) => !s.connected).map((s: ToolkitStatus) => s.slug);
       appsConnected = on;
-      promptSections.push(appsGuidance(on, missing, { anyApp: composio.allToolkits }));
+      promptSections.push(appsGuidance(on, missing, { anyApp: composio.allToolkits, unavailable: composio.unavailableToolkits }));
       log(`apps: ${connected.tools.length} tools${composio.allToolkits ? " (any app by name)" : ""}, connected: ${on.join(", ") || "none"}`);
     }
   }
@@ -267,11 +329,16 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
   }
 
   const skillsDir = resolveSkillsDir({ explicit: opts.skillsDir, env, packageUrl: import.meta.url });
-  const skills = loadSkillsPrompt(skillsDir, log);
+  const skillList = loadSkillList(skillsDir, log);
+  const skills = formatSkillsIndex(skillList);
   if (skills) promptSections.push(skills);
+  // Registered even when every skill is hidden: those load by name from a schedule or command.
+  if (skillList.length > 0) registry.register(loadSkillTool(skillList));
   const skillsPrompt = promptSections.length > 0 ? promptSections.join("\n\n") : undefined;
 
-  const runtime = new AgentRuntime({
+  // eslint-disable-next-line prefer-const
+  let runtime: AgentRuntime;
+  runtime = new AgentRuntime({
     state,
     config,
     policy,
@@ -317,7 +384,14 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
     sync.start();
   }
 
-  log(`agent "${config.agent.name}" ready: model ${modelSpec}, ${registry.all().length} tools, data ${state.root}`);
+  const toolCount = registry.all().length;
+  if (model.api === "openai-completions" && toolCount > OPENAI_COMPLETIONS_TOOL_LIMIT) {
+    log(
+      `warning: ${toolCount} tools registered, but ${modelSpec} accepts at most ${OPENAI_COMPLETIONS_TOOL_LIMIT} per request, ` +
+        "so owner replies will fail. Set COMPOSIO_MODE=router or shorten COMPOSIO_TOOLKITS.",
+    );
+  }
+  log(`agent "${config.agent.name}" ready: model ${modelSpec}, ${toolCount} tools, data ${state.root}`);
 
   return {
     runtime,
@@ -392,6 +466,15 @@ function inkboxSettings(env: NodeJS.ProcessEnv, config: InstinctConfig): InkboxS
   const handle = env.INKBOX_AGENT_HANDLE ?? config.agent.handle;
   if (!apiKey || !handle) return undefined;
   return { apiKey, handle, identityId: env.INKBOX_IDENTITY_ID };
+}
+
+/** An Ample agent credential (preferred: it never expires) or a plain token. */
+export function ampleCredentials(env: NodeJS.ProcessEnv): AmpleCredentials | undefined {
+  const clientId = env.AMPLE_CLIENT_ID?.trim();
+  const clientSecret = env.AMPLE_CLIENT_SECRET?.trim();
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  const token = env.AMPLE_TOKEN?.trim();
+  return token ? { token } : undefined;
 }
 
 /** Optional pieces must never stop the agent from booting. Log and go on. */

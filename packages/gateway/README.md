@@ -44,7 +44,9 @@ Validation: phone must normalize to E.164 (`+14155550123`; a bare 10-digit US nu
 | `INSTINCT_USE_MARITIME_LLM` | no | `1` sets `useMaritimeLlm: true` on each agent so Maritime injects its metered `OPENAI_API_KEY` and `OPENAI_BASE_URL`, and sets `INSTINCT_MODEL=openai-compatible/<model>` so the agent uses them. For deployments without a model key of their own |
 | `INSTINCT_MARITIME_MODEL` | no | Model id behind the Maritime proxy. Default `gpt-5.4` |
 | `COMPOSIO_API_KEY` | no | Passed to every new agent as a secret env var; enables Gmail, Calendar and the other Composio toolkits |
-| `COMPOSIO_TOOLKITS` | no | Comma-separated toolkit slugs sent with the key. Default `gmail,googlecalendar,googlecontacts`. The agent only enables apps when this is non-empty, so the gateway always sends it alongside the key |
+| `AMPLE_SIGNUP` | no | `1` lets each person's agent put the sites it builds online, in an Ample account of its own that it signs up for on its first deploy (see docs/AMPLE.md). Only the switch is passed on; an Ample credential set on the gateway is never forwarded |
+| `COMPOSIO_TOOLKITS` | no | Comma-separated toolkit slugs sent with the key. Default `gmail,googlecalendar,googlecontacts`. The agent only enables apps when this is non-empty, so the gateway always sends it alongside the key. It only seeds each agent's `config.json` on first boot: changing it later affects new agents, not ones already created (edit their `config.json` or recreate them) |
+| `COMPOSIO_MODE` | no | `direct` or `router`, passed to every new agent. Unset, each agent picks `router` when it runs on the Maritime LLM proxy (128-tool limit) and `direct` otherwise. See [COMPOSIO.md](../../docs/COMPOSIO.md#session-mode-composio_mode) |
 | `LINK_CLIENT_ID`, `LINK_CLIENT_SECRET`, `STRIPE_PUBLISHABLE_KEY` | no | Stripe Link Agent Wallet credentials. When `LINK_CLIENT_ID` is set, all three are copied into each agent's env (the secret marked secret) together with `LINK_REDIRECT_URI=<GATEWAY_PUBLIC_URL>/oauth/link/callback/<userId>` |
 | `GATEWAY_DATA_DIR` | no | Where `users.json` lives. Default `./.instinct-gateway`. Mount a volume here |
 | `PORT` | no | Default `8787`. Railway injects its own |
@@ -116,6 +118,8 @@ Any other host works the same way: run the image, give it a persistent directory
 ## Security notes
 
 **Signatures.** Every webhook is verified before anything is parsed: HMAC-SHA256 over `${X-Inkbox-Request-ID}.${X-Inkbox-Timestamp}.${raw body}` compared in constant time against `X-Inkbox-Signature: sha256=<hex>`, with a 5 minute timestamp window. Verification uses the signing key stored for that `userId`, so a valid signature for one user cannot be replayed against another. The 401 is computed before the response; the forward to Maritime happens after the 204 so Inkbox never waits on the agent.
+
+**Booting agents.** Maritime accepts a `/chat` for an agent whose VM is still being built and answers 200 with a null response, and the message never reaches the agent. That is exactly when the first text after signup arrives. For an agent created in the last 15 minutes the relay asks Maritime for the agent's status first and holds the event (the durable inbox retries it) until the status is no longer `deploying`; a 200 without a response is also treated as not delivered. `checkAgentStatus` on the relay deps forces the check always or never.
 
 **Replay and noise.** Events are deduplicated by Inkbox event id (an in-memory LRU of 5000). Delivery receipts (`*.sent`, `*.delivered`, `*.failed`, `*delivery*`) are dropped; the agent only hears about messages, reactions and A2A tasks. An event that fails to forward after three attempts releases its id so it can be replayed by hand.
 

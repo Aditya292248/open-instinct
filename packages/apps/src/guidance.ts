@@ -1,6 +1,8 @@
 export interface AppsGuidanceOptions {
   /** True when the session has no toolkit allowlist: any app can be requested by name. */
   anyApp?: boolean;
+  /** Configured toolkits left out because the Composio project has no auth config for them. */
+  unavailable?: string[];
 }
 
 /**
@@ -21,6 +23,12 @@ export function appsGuidance(connected: string[], missing: string[], opts: AppsG
   if (missing.length > 0) {
     lines.push(`Not connected: ${missing.join(", ")}.`);
   }
+  const unavailable = opts.unavailable ?? [];
+  if (unavailable.length > 0) {
+    lines.push(
+      `Not available yet: ${unavailable.join(", ")}. The person running this agent must add a Composio auth config for ${unavailable.length === 1 ? "it" : "them"} first; until then apps_connect cannot connect ${unavailable.length === 1 ? "it" : "them"}. Say so plainly if the owner asks.`,
+    );
+  }
   if (opts.anyApp) {
     lines.push(
       "Any app Composio supports can be requested by name: Gmail, Google Calendar, Notion, Slack, GitHub, Linear, HubSpot and hundreds more. Use app_composio_search_tools to find the right action, then app_composio_multi_execute_tool to run it.",
@@ -30,6 +38,10 @@ export function appsGuidance(connected: string[], missing: string[], opts: AppsG
   lines.push(
     "To connect an app, call apps_connect with the toolkit name (or app_composio_manage_connections) and send the owner the link it returns. The owner opens the link and signs in; no one else can do this step.",
   );
+  lines.push(
+    "After you send a connect link, never make the owner report back or type a word like done. On their next message, whatever it says, call apps_list first: if the app is now connected, carry on with what they wanted; if not, say so in one line and offer the same link again.",
+  );
+  lines.push("When an app action fails because the app is not connected, send the connect link in that same turn instead of describing the problem.");
   lines.push("Only the owner may connect or disconnect apps. If someone else asks, decline and offer to tell the owner.");
   lines.push("Never paste tokens, API keys or OAuth codes into a message. Links are fine.");
   lines.push("Prefer one direct app_ tool per action. Check the result before telling anyone it worked.");

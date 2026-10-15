@@ -44,6 +44,24 @@ describe("appsGuidance", () => {
   });
 });
 
+describe("appsGuidance with toolkits lacking an auth config", () => {
+  it("names them and says who has to fix it", () => {
+    const text = appsGuidance(["gmail"], ["googlecalendar"], { unavailable: ["googlecontacts"] });
+    expect(text).toContain("Not available yet: googlecontacts.");
+    expect(text).toContain("must add a Composio auth config for it");
+    expect(appsGuidance(["gmail"], [])).not.toContain("Not available yet");
+  });
+});
+
+describe("appsGuidance after a connect link", () => {
+  it("tells the model to check apps_list itself and to send the link when an action fails unconnected", () => {
+    const text = appsGuidance(["gmail"], ["googlecalendar"]);
+    expect(text).toContain("call apps_list first");
+    expect(text).toContain("never make the owner report back");
+    expect(text).toContain("send the connect link in that same turn");
+  });
+});
+
 describe("DEFAULT_TOOLKITS", () => {
   it("is gmail, calendar and contacts", () => {
     expect(DEFAULT_TOOLKITS).toEqual(["gmail", "googlecalendar", "googlecontacts"]);

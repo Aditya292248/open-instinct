@@ -267,6 +267,31 @@ describe("http server", () => {
     expect(await res.json()).toEqual({ error: "not found" });
   });
 
+  it("system task envelope: runs as a system task, never as owner chat or an Inkbox event", async () => {
+    const tasks: Array<{ id: string; prompt: string; quiet?: boolean }> = [];
+    app.runtime.runSystemTask = async (task) => {
+      tasks.push(task);
+      return "done";
+    };
+    const message = `@@instinct-event@@${JSON.stringify({ type: "system.task", id: "conference-prepare", name: "Prepare", prompt: "Research the owner.", quiet: true })}`;
+    const res = await post("/chat", { message, conversation_id: "system:conference-prepare" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ response: "", acked: true, conversationKey: "system:conference-prepare" });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(tasks).toEqual([{ type: "system.task", id: "conference-prepare", name: "Prepare", prompt: "Research the owner.", quiet: true }]);
+    expect(app.inbound).toHaveLength(0);
+    expect(app.scheduled).toHaveLength(0);
+
+    delete app.runtime.runSystemTask;
+    const unsupported = await post("/chat", { message, conversation_id: "system:conference-prepare" });
+    expect(await unsupported.json()).toMatchObject({ acked: true, blocked: "system tasks are not supported by this runtime" });
+    expect(app.inbound).toHaveLength(0);
+
+    const malformed = await post("/chat", { message: `@@instinct-event@@${JSON.stringify({ type: "system.task", id: "no prompt" })}` });
+    expect(await malformed.json()).toMatchObject({ response: "", acked: true });
+    expect(app.inbound).toHaveLength(0);
+  });
+
   it("scheduled wake: runs the matching entry once on scheduled:<id> and never as owner chat", async () => {
     const res = await post("/chat", { message: "Send the morning brief", source: "scheduled" });
     expect(res.status).toBe(200);
@@ -541,6 +566,26 @@ describe("payments callback", () => {
       });
       expect(await malformed.json()).toEqual({ response: "", acked: true });
       expect(calls).toHaveLength(1);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+});
+
+describe("payments routes for the CLI", () => {
+  it("serve the authorize URL and connection state behind the chat token, and 404 without payments", async () => {
+    const app = stubApp();
+    const server = createHttpServer(app, { env: { INSTINCT_CHAT_TOKEN: "tok" } });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const auth = { authorization: "Bearer tok" };
+    try {
+      expect((await fetch(`${base}/oauth/link/start`, { headers: auth })).status).toBe(404);
+      expect((await fetch(`${base}/payments/status`, { headers: auth })).status).toBe(404);
+      app.wallet = { handleCallback: async () => undefined, isConnected: () => false, authorizeUrl: () => ({ url: "https://login.link.com/auth?state=s1", state: "s1" }) };
+      expect((await fetch(`${base}/oauth/link/start`)).status).toBe(401);
+      expect(await (await fetch(`${base}/oauth/link/start`, { headers: auth })).json()).toEqual({ url: "https://login.link.com/auth?state=s1" });
+      expect(await (await fetch(`${base}/payments/status`, { headers: auth })).json()).toEqual({ connected: false });
     } finally {
       await new Promise<void>((r) => server.close(() => r()));
     }
