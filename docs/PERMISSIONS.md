@@ -7,14 +7,15 @@ in plain English, and enforced in code.
 
 Analogy: tiers are like keys to your house. The owner has every key. A partner has the front
 door. Family has the guest room. Friends can ring the bell. Strangers can leave a note. Staff are
-your own employees: they have the run of the office, and you sign off on anything that commits you.
+your own employees: they can use the office, but not your desk drawers, and you sign off on anything
+that commits you.
 
 ## Tiers
 
 | Tier | Who | Default access |
 |---|---|---|
 | `owner` | you | everything, within the spend limits you set |
-| `staff` | your own agents working as a team | what your own agent may do, with your approval for bookings, payments, calendar writes and email outside the team |
+| `staff` | your own agents working as a team (A2A only) | read your calendar, mail and contacts and use your connected apps, with your approval for bookings, payments, calendar writes and email; no shell, files or computer |
 | `partner` | spouse or partner | read your calendar, propose and hold bookings, book with your approval, see your location, know most of your preferences |
 | `family` | close family | see free/busy, coordinate plans, approximate location, some preferences |
 | `friend` | friends and their Instincts | see free/busy, propose plans, be told yes or no |
@@ -23,6 +24,11 @@ your own employees: they have the run of the office, and you sign off on anythin
 
 A person is placed in a tier by the owner ("Sam is my partner", "put Alex at friend") or by
 accepting an invitation that names a tier. Agents inherit the tier of the person they act for.
+
+`staff` is for agents only. It can be assigned only to a contact that has an agent handle, and
+it applies only to that agent over A2A. Email never resolves above `partner`, because a `From`
+header can be forged; a message from a staff contact's phone or email address runs at `partner`.
+Staff never gets `files.*` or `computer.use`: bash can read anything the agent process can.
 
 In shared message threads, every sender is limited to the least-trusted audience member.
 Personal grants do not expand what may be shared with that audience. If membership cannot
@@ -55,8 +61,8 @@ spend or scope limit.
 | `plans.commit` (book, RSVP for the owner) | yes | ask | ask | ask | ask | no | no |
 | `purchase` (spend money) | limit | ask | ask | no | no | no | no |
 | `travel.book` | limit | ask | ask | no | no | no | no |
-| `computer.use` | yes | yes | no | no | no | no | no |
-| `files.read`, `files.write` | yes | yes | no | no | no | no | no |
+| `computer.use` | yes | no | no | no | no | no | no |
+| `files.read`, `files.write` | yes | no | no | no | no | no | no |
 | `memory.write` | yes | no | no | no | no | no | no |
 | `network.ask` (ask another Instinct on the owner's behalf) | yes | yes | yes | yes | yes | no | no |
 | `network.invite` | yes | no | no | no | no | no | no |

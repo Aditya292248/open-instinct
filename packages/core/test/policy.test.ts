@@ -53,12 +53,17 @@ describe("DEFAULT_TIER_TABLE", () => {
     }
   });
 
-  it("gives the working capabilities to the owner and staff only", () => {
-    for (const cap of ["computer.use", "files.read", "files.write", "email.read"] as Capability[]) {
+  it("gives the shell capabilities (bash = files.read + files.write, computer.use) to the owner only", () => {
+    for (const cap of ["computer.use", "files.read", "files.write"] as Capability[]) {
       expect(DEFAULT_TIER_TABLE.owner[cap]).toBe("yes");
-      expect(DEFAULT_TIER_TABLE.staff[cap]).toBe("yes");
-      for (const tier of TIER_ORDER.filter((t) => t !== "owner" && t !== "staff")) expect(DEFAULT_TIER_TABLE[tier][cap], `${tier}/${cap}`).toBe("no");
+      for (const tier of TIER_ORDER.filter((t) => t !== "owner")) expect(DEFAULT_TIER_TABLE[tier][cap], `${tier}/${cap}`).toBe("no");
     }
+  });
+
+  it("gives email.read to the owner and staff only", () => {
+    expect(DEFAULT_TIER_TABLE.owner["email.read"]).toBe("yes");
+    expect(DEFAULT_TIER_TABLE.staff["email.read"]).toBe("yes");
+    for (const tier of TIER_ORDER.filter((t) => t !== "owner" && t !== "staff")) expect(DEFAULT_TIER_TABLE[tier]["email.read"], tier).toBe("no");
   });
 });
 
@@ -83,9 +88,11 @@ describe("PolicyEngine.evaluate across tiers", () => {
     for (const tier of TIER_ORDER) expect(engine.evaluate(principalOf(tier), meta(["calendar.write"]), {}).outcome, tier).toBe(expected[tier]);
   });
 
-  it("keeps computer.use for the owner and staff only", () => {
-    for (const tier of TIER_ORDER) {
-      expect(engine.evaluate(principalOf(tier), meta(["computer.use"]), {}).outcome, tier).toBe(tier === "owner" || tier === "staff" ? "allow" : "deny");
+  it("keeps computer.use and the file tools (bash needs both files.*) for the owner only", () => {
+    for (const caps of [["computer.use"], ["files.read"], ["files.write"], ["files.read", "files.write"]] as Capability[][]) {
+      for (const tier of TIER_ORDER) {
+        expect(engine.evaluate(principalOf(tier), meta(caps), {}).outcome, `${tier}/${caps.join("+")}`).toBe(tier === "owner" ? "allow" : "deny");
+      }
     }
   });
 
@@ -373,10 +380,16 @@ describe("loadPolicy / savePolicy", () => {
 });
 
 describe("staff tier", () => {
-  it("sits between owner and partner and gets the owner's working capabilities", () => {
+  it("sits between owner and partner and gets the owner's working read capabilities", () => {
     expect(TIER_ORDER.indexOf("staff")).toBe(1);
-    for (const cap of ["computer.use", "files.read", "files.write", "email.read", "calendar.read", "web.read", "apps.use", "network.ask"] as const) {
+    for (const cap of ["email.read", "calendar.read", "contacts.read", "web.read", "apps.use", "network.ask"] as const) {
       expect(DEFAULT_TIER_TABLE.staff[cap], cap).toBe("yes");
+    }
+  });
+
+  it("never gets a shell, the file tools or the computer", () => {
+    for (const cap of ["computer.use", "files.read", "files.write"] as const) {
+      expect(DEFAULT_TIER_TABLE.staff[cap], cap).toBe("no");
     }
   });
 

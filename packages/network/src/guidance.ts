@@ -4,7 +4,7 @@ import type { Principal, Tier } from "@open-instinct/core";
 const SHARE_AT_TIER: Record<Tier, string> = {
   owner: "everything the owner has told you, within the spend policy.",
   staff:
-    "what the owner's own agent may see: calendar details, location, preferences, mail, files and the computer, in service of the assigned task. Committing the owner (a booking, a payment, a calendar write, email to someone outside the team) still needs the owner's yes.",
+    "calendar details, location, preferences, mail and contacts, in service of the assigned task. Never the owner's files, shell or computer. Committing the owner (a booking, a payment, a calendar write, email to someone outside the team) still needs the owner's yes.",
   partner:
     "calendar details (titles and attendees), exact location, most preferences, and you may hold and propose bookings. Committing a booking or a calendar write still needs the owner's yes.",
   family:

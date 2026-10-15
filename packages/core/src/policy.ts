@@ -23,9 +23,13 @@ type Row = [owner: Permission, staff: Permission, partner: Permission, family: P
 
 // Columns follow TIER_ORDER: owner, staff, partner, family, friend, contact, stranger.
 // `staff` is an agent that works for the same owner (a teammate). It gets the owner's working
-// capabilities; anything that commits the owner (calendar writes, outside email, bookings,
-// spend) asks the owner first, and it never changes the owner's own records (memory, trust,
-// schedules, invitations).
+// read capabilities (calendar, mail, contacts, web, apps); anything that commits the owner
+// (calendar writes, outside email, bookings, spend) asks the owner first, and it never changes
+// the owner's own records (memory, trust, schedules, invitations). It never gets a shell:
+// files.read, files.write and computer.use stay owner-only, because bash (files.read +
+// files.write) can read anything the process uid can, including the data dir. Staff is only
+// assignable to a contact with an agent handle, and email never resolves above partner
+// (see principal.ts), so the tier is reachable only over authenticated A2A.
 // "intro" and "partial" are allowed outcomes that carry a hint for the prompt.
 // `web.read` (web_search, web_fetch; public hosts only, see core-tools.ts) and
 // `apps.use` (Composio app tools) are transport capabilities: the specific
@@ -49,9 +53,9 @@ const ROWS: Record<Capability, Row> = {
   "plans.commit": ["yes", "ask", "ask", "ask", "ask", "no", "no"],
   "purchase": ["limit", "ask", "ask", "no", "no", "no", "no"],
   "travel.book": ["limit", "ask", "ask", "no", "no", "no", "no"],
-  "computer.use": ["yes", "yes", "no", "no", "no", "no", "no"],
-  "files.read": ["yes", "yes", "no", "no", "no", "no", "no"],
-  "files.write": ["yes", "yes", "no", "no", "no", "no", "no"],
+  "computer.use": ["yes", "no", "no", "no", "no", "no", "no"],
+  "files.read": ["yes", "no", "no", "no", "no", "no", "no"],
+  "files.write": ["yes", "no", "no", "no", "no", "no", "no"],
   "memory.write": ["yes", "no", "no", "no", "no", "no", "no"],
   "network.ask": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
   "network.invite": ["yes", "no", "no", "no", "no", "no", "no"],
