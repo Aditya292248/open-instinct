@@ -32,7 +32,14 @@ export interface CoreToolDeps {
   workspaceDir?: string;
   /** Called after approval_settle resolves an approval, so the runtime can wake the conversation that was waiting. */
   onApprovalSettled?: (approval: Approval, approved: boolean) => Promise<void> | void;
+  /** An OpenAI-compatible images endpoint (`POST {baseUrl}/images/generations`). Without it image_generate explains what to set. */
+  images?: { apiKey: string; baseUrl?: string; model?: string };
 }
+
+export const DEFAULT_IMAGE_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_IMAGE_MODEL = "gpt-image-1";
+const IMAGE_SIZES = ["1024x1024", "1024x1536", "1536x1024"] as const;
+const IMAGE_TIMEOUT_MS = 120_000;
 
 const WEB_TEXT_CAP = 20_000;
 /** Bytes read from a fetched page before giving up on the rest. */
@@ -50,6 +57,7 @@ export function coreTools(deps: CoreToolDeps): RegisteredTool[] {
     webFetchTool(deps),
     webSearchTool(deps),
     createPdfTool(deps),
+    imageGenerateTool(deps),
   ];
 }
 
@@ -548,11 +556,74 @@ function createPdfTool({ workspaceDir, config }: CoreToolDeps): RegisteredTool {
       if (!/\.pdf$/i.test(requested.trim())) return fail(`The path must end in .pdf: ${requested}`);
       const target = resolveWorkspacePath(workspaceDir, requested.trim());
       if (!target) return fail(`Refused: "${requested}" is outside the workspace.`);
-      const pdf = await renderMarkdownToPdf(markdown, { ...(title ? { title } : {}), author: config.agent.name });
+      const pdf = await renderMarkdownToPdf(markdown, {
+        ...(title ? { title } : {}),
+        author: config.agent.name,
+        // `![alt](images/ship.png)` embeds a file from the workspace; anything outside it is refused.
+        resolveImage: (src) => {
+          const file = resolveWorkspacePath(workspaceDir, src.trim());
+          return file && fs.existsSync(file) ? file : undefined;
+        },
+      });
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, pdf);
       const pages = pdfPageCount(pdf);
       return { content: [{ type: "text", text: `Wrote ${target} (${formatBytes(pdf.length)}, ${pages} page${pages === 1 ? "" : "s"}).` }], details: { path: target, bytes: pdf.length, pages } };
+    },
+  });
+}
+
+function imageGenerateTool({ workspaceDir, images, fetchImpl }: CoreToolDeps): RegisteredTool {
+  const doFetch = fetchImpl ?? fetch;
+  return defineTool({
+    name: "image_generate",
+    label: "Generate image",
+    description:
+      "Generate an image from a text prompt and save it as a PNG in the workspace. Returns the path. Put it in a PDF with create_pdf using ![caption](path), or send it with send_file. Describe the subject, style, mood and composition in the prompt.",
+    parameters: Type.Object({
+      prompt: Type.String({ description: "What to draw, in one or two sentences" }),
+      path: Type.String({ description: "Where to save, relative to the workspace, ending in .png, e.g. art/ship-01.png" }),
+      size: Type.Optional(Type.Union(IMAGE_SIZES.map((s) => Type.Literal(s)), { description: "1024x1024 (default), 1024x1536 portrait or 1536x1024 landscape" })),
+    }),
+    meta: { capabilities: ["files.write"], group: "files", describe: (a) => `generate image ${argText(a, "path")}: ${argText(a, "prompt")}` },
+    execute: async ({ prompt, path: requested, size }, _ctx, signal) => {
+      if (!workspaceDir) return fail("No workspace is configured, so images cannot be saved.");
+      if (!images) return fail("Image generation is not set up on this agent: the deployer sets IMAGE_API_KEY (or OPENAI_API_KEY) and optionally IMAGE_BASE_URL and IMAGE_MODEL. Say that in one line and offer a text-only version.");
+      if (!/\.png$/i.test(requested.trim())) return fail(`The path must end in .png: ${requested}`);
+      const target = resolveWorkspacePath(workspaceDir, requested.trim());
+      if (!target) return fail(`Refused: "${requested}" is outside the workspace.`);
+      const base = (images.baseUrl ?? DEFAULT_IMAGE_BASE_URL).replace(/\/+$/, "");
+      let res: Response;
+      try {
+        res = await doFetch(`${base}/images/generations`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${images.apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ model: images.model ?? DEFAULT_IMAGE_MODEL, prompt, size: size ?? "1024x1024", n: 1 }),
+          signal: signal ?? AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+        });
+      } catch (err) {
+        return fail(`Image generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      const text = await res.text();
+      if (!res.ok) return fail(`Image generation failed (HTTP ${res.status}): ${clip(text.replace(/\s+/g, " "), 200)}`);
+      let payload: { data?: Array<{ b64_json?: string; url?: string }> };
+      try {
+        payload = JSON.parse(text) as typeof payload;
+      } catch {
+        return fail("Image generation failed: the endpoint did not return JSON.");
+      }
+      const first = payload.data?.[0];
+      let bytes: Buffer | undefined;
+      if (first?.b64_json) bytes = Buffer.from(first.b64_json, "base64");
+      else if (first?.url) {
+        const img = await doFetch(first.url, { signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
+        if (!img.ok) return fail(`Image generation failed: could not download the result (HTTP ${img.status}).`);
+        bytes = Buffer.from(await img.arrayBuffer());
+      }
+      if (!bytes || bytes.length === 0) return fail("Image generation failed: the endpoint returned no image.");
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, bytes);
+      return { content: [{ type: "text", text: `Saved ${target} (${formatBytes(bytes.length)}). Embed it with ![caption](${requested.trim()}) in create_pdf, or send it with send_file.` }], details: { path: target, bytes: bytes.length } };
     },
   });
 }
