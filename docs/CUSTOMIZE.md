@@ -160,7 +160,7 @@ food, travel and scheduling preferences there and keep medical or financial note
 
 ## 7. Change who may ask for what
 
-Six tiers (owner, partner, family, friend, contact, stranger) and a table of what each tier
+Seven tiers (owner, staff, partner, family, friend, contact, stranger) and a table of what each tier
 may do, in [PERMISSIONS.md](PERMISSIONS.md). Three ways to change it:
 
 ```bash

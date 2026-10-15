@@ -40,6 +40,9 @@ export async function runInvite(ctx: CliContext, argv: string[]): Promise<number
 
   const contacts = new ContactStore(ctx.state());
   const existing = contacts.search(name).find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (tier === "staff" && !(peerHandle ?? existing?.agentHandle)) {
+    throw new UsageError(`Tier "staff" is only for agents, and ${existing?.name ?? name} has no agent handle. Add --handle <their agent's Inkbox handle>, or pick partner or lower.`, "invite");
+  }
   const contact = contacts.upsert({
     ...(existing ?? {}),
     name: existing?.name ?? name,

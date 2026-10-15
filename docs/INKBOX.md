@@ -250,7 +250,7 @@ The two gates compared:
 | Decides | whether a message or task is delivered | what the sender may ask for |
 | Lives in | Inkbox, per identity | `policy.json` and `contacts.json` in your data directory |
 | Edited with | the admin key, the console, `instinct invite --handle` | `instinct trust`, `instinct invite`, or plain language to the agent |
-| Granularity | allow or block | six tiers plus scoped grants |
+| Granularity | allow or block | seven tiers plus scoped grants |
 
 ## A2A invitations and how our tiers sit on top
 
