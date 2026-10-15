@@ -157,12 +157,16 @@ describe("PolicyEngine spend limits (owner, limit permission)", () => {
     expect(engine.evaluate(principalOf("partner"), purchaseMeta, { amountUsd: 10, merchant: "Uber" }).outcome).toBe("ask");
     expect(engine.evaluate(owner, purchaseMeta, { amountUsd: 10, merchant: "Uber" }).outcome).toBe("allow");
     expect(engine.evaluate(owner, purchaseMeta, { amountUsd: 10, merchant: "Amazon" }).outcome).toBe("ask");
+    expect(engine.evaluate(owner, purchaseMeta, { amountUsd: 10, merchantName: "Uber" }).outcome).toBe("ask");
   });
 
   it("blocks a blocked merchant wherever it appears in the arguments", () => {
     const policy = defaultPolicy();
     policy.spend.blockedMerchants = ["casino"];
     const engine = new PolicyEngine(policy);
+    const grantedPartner = principalOf("partner");
+    // A block must still win after the caller receives purchase capability.
+    engine.addGrant({ to: grantedPartner.id, capabilities: ["purchase"] });
     // The model writes the tool arguments, so the merchant name does not have to
     // land on one of the keys merchantOf knows. A deny list that only reads those
     // keys is weaker than neverWithoutAsk, which scans the whole payload.
@@ -176,12 +180,25 @@ describe("PolicyEngine spend limits (owner, limit permission)", () => {
     for (const [name, args] of shapes) {
       expect(engine.evaluate(owner, purchaseMeta, args).outcome, name).toBe("deny");
       // And a grant never opens it either.
-      expect(engine.evaluate(principalOf("partner"), purchaseMeta, args).outcome, `${name} (partner)`).toBe("deny");
+      expect(engine.evaluate(grantedPartner, purchaseMeta, args).outcome, `${name} (granted partner)`).toBe("deny");
     }
     // An empty or whitespace entry must not turn the list into a catch-all.
     policy.spend.blockedMerchants = ["   "];
     const loose = new PolicyEngine(policy);
     expect(loose.evaluate(owner, purchaseMeta, { amountUsd: 10, merchant: "Uber" }).outcome).toBe("allow");
+  });
+
+  it("blocks escaped merchant names in nested arguments", () => {
+    for (const blocked of ['Lucky "Casino"', "Lucky\\Casino", "Lucky\nCasino"]) {
+      const policy = defaultPolicy();
+      policy.spend.blockedMerchants = [blocked];
+      const engine = new PolicyEngine(policy);
+      expect(engine.evaluate(owner, purchaseMeta, { amountUsd: 10, order: { merchant: blocked } }).outcome, blocked).toBe("deny");
+      expect(engine.evaluate(owner, purchaseMeta, { amountUsd: 10, order: { [blocked]: true } }).outcome, `${blocked} as key`).toBe("deny");
+    }
+    const numeric = defaultPolicy();
+    numeric.spend.blockedMerchants = ["12345"];
+    expect(new PolicyEngine(numeric).evaluate(owner, purchaseMeta, { amountUsd: 10, merchantId: 12345 }).outcome).toBe("deny");
   });
 });
 
