@@ -305,7 +305,8 @@ Server:
 | `INSTINCT_CHAT_TOKEN` | bearer token for `/chat`, `/status`, `/schedules` |
 | `INSTINCT_BIND` | bind address; default `127.0.0.1`, or `0.0.0.0` when `PORT` or a `MARITIME_*` variable is set |
 | `INSTINCT_PUBLIC_URL` | this agent's public URL, used to build the Link callback |
-| `INSTINCT_REPLY_BUDGET_MS` | how long `/chat` waits before acknowledging (default 20000) |
+| `INSTINCT_ACK_SLOW_REPLIES` | `1` texts the owner one "on it" in their 1:1 iMessage/SMS thread when a turn is still running after `INSTINCT_REPLY_BUDGET_MS` (`config.features.ackSlowReplies`); never for a queued text, a group or a non-owner |
+| `INSTINCT_REPLY_BUDGET_MS` | how long `/chat` waits before acknowledging, and the delay before the optional slow-reply text (default 20000) |
 | `INSTINCT_SKILLS_DIR` | SKILL.md folder (default `<repo>/skills`) |
 | `INSTINCT_COMPUTER` | `auto` (desktopd if present, else hosted if `MARITIME_API_KEY`, else none), `desktopd`, `maritime`, `none` |
 | `MARITIME_API_KEY`, `MARITIME_COMPUTERS_MCP_URL` | hosted computer fallback |
