@@ -43,17 +43,53 @@ is available to consumers in the United States and Canada. The agent can run any
 ## Registering an OAuth client
 
 Link Agent Wallet uses OAuth 2.0 with PKCE. You need three values: a client id, a
-client secret and a Stripe publishable key.
+client secret and a Stripe publishable key. Stripe issues the first two by application,
+not from the dashboard. Plan for it: the form takes about fifteen minutes to fill in,
+and Stripe reviews applications on a rolling basis, every 3 to 5 days as of October
+2026. Until the client arrives the agent shops but hands you the screen at checkout.
 
-1. Read the Stripe guide: <https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet/oauth>.
-2. Request a client through the form linked from that page. Give your app name, a short
-   description of what the agent buys, and the exact redirect URI or URIs you will use.
-3. Stripe sends back `client_id` and `client_secret`.
-4. The publishable key (`pk_live_...` or `pk_test_...`) is in your Stripe Dashboard under
-   Developers, API keys.
+### Before you start
+
+- A Stripe account. Note the account id (`acct_...`, under Settings, Business, Account
+  details). Your business can be anywhere; the owners who connect wallets must be US or
+  Canadian consumers.
+- A public page for your app or company. The form asks for it.
+- The exact redirect URI or URIs you will use (table below). They must match character
+  for character: scheme, host, port and path.
+- A square PNG or JPEG logo (optional; Stripe shows it on the Link consent screen).
+- A short description of the app in under ten words, and the name owners will see.
+
+### The application
+
+1. Open the Link CLI guide, <https://docs.stripe.com/agentic-commerce/link-cli>, and
+   follow its link to the "Link OAuth App Registration" Google Form (it requires a
+   Google sign-in; the answers are emailed back to you).
+2. Page one asks who you are and what you are building: email, Stripe account id, web
+   presence, who your users are, the user journey from first text to a paid order, the
+   technical approach (where the agent runs, where tokens live, how a payment is
+   confirmed), the countries you serve, user and volume estimates, and a launch plan.
+   Plain, specific answers are fine; describe the three-step flow from this page.
+3. Page two is the OAuth app itself:
+   - Scopes: tick `agentic payments`. Only tick `financial insights` if you will use it;
+     requesting a scope at login that was not approved here fails hard.
+   - Client type: `Confidential`. Open Instinct keeps the secret on the server, never in a
+     browser or on the phone. A public client triggers a longer security review.
+   - Integration details: say the flow is authorization code with PKCE, started
+     server-side, with one callback path, and that every purchase needs the owner's yes.
+   - App name, logo and description: what the owner sees on Link's consent screen.
+   - Redirect URLs: the exact URIs from the table below, one per line.
+   - How you want the client secret delivered. Stripe sends it encrypted; the form links
+     a document with the key-exchange steps (you request access to it), and the usual
+     answer is to send your key to `agent-spend@stripe.com`.
+4. Submit. The confirmation page says reviews run every 3 to 5 days. Amendments, such
+   as a new redirect URI, go to `agent-spend@stripe.com` with your app name.
+5. Stripe sends back `client_id` and the encrypted `client_secret`.
+6. The publishable key (`pk_live_...` or `pk_test_...`) is in your Stripe Dashboard under
+   Developers, API keys. It is the only one of the three you can get yourself.
 
 Redirect URIs must match exactly: scheme, host, port and path. Register every one you
-will use.
+will use, including staging. Stripe discourages `localhost` URIs; if you need one for
+`instinct dev`, say why in the form.
 
 | Deployment | Redirect URI |
 |---|---|
