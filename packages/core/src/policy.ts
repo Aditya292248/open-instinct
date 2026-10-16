@@ -65,9 +65,12 @@ const ROWS: Record<Capability, Row> = {
   "web.read": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
   // apps.use: call connected app tools; each app tool also carries its own capability.
   "apps.use": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
-  // phone.call: place a Voice AI call to a phone number. The owner says yes in the thread first (prompt rule 8);
-  // staff asks the owner; partners and below are denied unless a grant names phone.call.
-  "phone.call": ["yes", "ask", "no", "no", "no", "no", "no"],
+  // phone.call: place a Voice AI call to a phone number. Always "ask", even for the owner: a call is
+  // outward-facing and billed, and an injected instruction in the owner's own thread (a page, an
+  // email, a forwarded message) could otherwise dial. The owner approves each exact call (number and
+  // brief) with their own plain yes; staff asks the owner; partners and below are denied unless a
+  // grant names phone.call.
+  "phone.call": ["ask", "ask", "no", "no", "no", "no", "no"],
 };
 
 /** Capabilities that move money. The owner gets them under the spend policy; a grant never skips it. */
@@ -274,10 +277,12 @@ export class PolicyEngine {
     const permission = this.permissionFor(principal.tier, capability);
     const amount = meta.amountUsd?.(args);
     const label = meta.describe?.(args) ?? `${principal.displayName} wants ${capability}`;
+    // The owner's own asks (phone.call) carry no "<name> asks:" prefix: the owner is the one reading it.
+    const asker = principal.kind === "owner" ? "" : `${principal.displayName} asks: `;
     const askDecision: PolicyDecision = {
       outcome: "ask",
       reason: `${capability} requires the owner's approval for tier ${principal.tier}`,
-      approvalPrompt: `${principal.displayName} asks: ${label}${amount !== undefined ? ` (${fmtUsd(amount)})` : ""}. Want me to go ahead?`,
+      approvalPrompt: `${asker}${label}${amount !== undefined ? ` (${fmtUsd(amount)})` : ""}. Want me to go ahead?`,
     };
 
     // A blocked merchant is blocked for everyone; no tier, grant or approval opens it.

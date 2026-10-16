@@ -361,7 +361,8 @@ export function phoneCallTool(deps: PhoneCallDeps): RegisteredTool {
         ...(voicemailMessage ? { voicemailMessage } : {}),
         ...(deps.callOrigination ? { origination: deps.callOrigination } : {}),
       });
-      return textResult(`Call ${call.id}: ${call.status}.`);
+      const minutes = call.minutesRemaining !== undefined ? ` ${call.minutesRemaining} call minutes left on the plan this month.` : "";
+      return textResult(`Call ${call.id}: ${call.status}.${minutes}`);
     },
   });
 }

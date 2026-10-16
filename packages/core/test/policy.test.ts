@@ -42,7 +42,7 @@ describe("DEFAULT_TIER_TABLE", () => {
     expect(DEFAULT_TIER_TABLE.stranger["owner.relay"]).toBe("yes");
     expect(DEFAULT_TIER_TABLE.partner["email.read"]).toBe("no");
     expect(DEFAULT_TIER_TABLE.partner["email.send"]).toBe("ask");
-    expect(DEFAULT_TIER_TABLE.owner["phone.call"]).toBe("yes");
+    expect(DEFAULT_TIER_TABLE.owner["phone.call"]).toBe("ask");
     expect(DEFAULT_TIER_TABLE.staff["phone.call"]).toBe("ask");
     expect(DEFAULT_TIER_TABLE.partner["phone.call"]).toBe("no");
     expect(DEFAULT_TIER_TABLE.stranger["phone.call"]).toBe("no");

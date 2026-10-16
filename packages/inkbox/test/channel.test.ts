@@ -335,6 +335,8 @@ describe("InkboxChannel phone calls", () => {
       to_number: "+14152609174",
       origination: "shared_imessage_number",
       mode: "hosted_agent",
+      // Pinned on every call, so an org-level "yolo" authority never widens what Voice AI may do.
+      hosted_agent_authority_mode: "contact_scoped",
       on_voicemail: "leave_message",
       voicemail_message: "Maria says hi.",
       agent_identity_id: "ident_1",
@@ -351,7 +353,7 @@ describe("InkboxChannel phone calls", () => {
     expect(sends("/api/v1/phone/place-call")[0]?.body).toMatchObject({ origination: "dedicated_imessage_number", agent_identity_id: "ident_1" });
     expect((sends("/api/v1/phone/place-call")[0]?.body as Record<string, unknown>).from_number).toBeUndefined();
     await ch.placeCall({ toNumber: "+14152609174", reason: "Say hi", origination: "dedicated_number" });
-    expect(sends("/api/v1/phone/place-call")[1]?.body).toMatchObject({ origination: "dedicated_number", from_number: "+16505550123" });
+    expect(sends("/api/v1/phone/place-call")[1]?.body).toMatchObject({ origination: "dedicated_number", from_number: "+16505550123", hosted_agent_authority_mode: "contact_scoped" });
   });
 
   it("refuses dedicated_number on an identity without a phone number", async () => {

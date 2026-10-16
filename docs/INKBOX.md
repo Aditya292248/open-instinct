@@ -134,8 +134,9 @@ What the pieces do:
 | Piece | Where | What |
 |---|---|---|
 | `phone_call` tool | `packages/inkbox/src/tools.ts` | `toNumber` (E.164), `reason` (the brief), optional `voicemailMessage`. Places the call in `hosted_agent` mode with `on_voicemail=leave_message` and returns the call id and status, nothing else |
-| `phone.call` capability | `packages/core/src/policy.ts` | owner only by default; prompt rule 8 makes the agent get the owner's explicit yes to the exact call (number and what will be said) before calling, and never call the owner's contacts unasked |
-| `call.ended` subscription | `DEFAULT_WEBHOOK_EVENTS`, subscribed at `init`, by the gateway at signup, and added to older subscriptions when a self-hosted server boots | the only call event the agent listens to |
+| `phone.call` capability | `packages/core/src/policy.ts` | `ask` for the owner and for staff, `no` for everyone else. Every call waits for the owner's own plain yes to the exact number and brief, even when the owner asked for it: the owner's thread can carry text the owner did not write (a pasted page, a forwarded email), and a call is outward-facing and billed, so an injected instruction must never dial. `approval_settle` refuses call approvals, as it does payments. Prompt rule 8 tells the agent to call the tool once and wait, and never to call the owner's contacts unasked |
+| Voice AI authority | `placeCall` in `packages/inkbox/src/channel.ts` | pinned to `contact_scoped` on every call. Inkbox lets an organization save a `yolo` authority for its Voice AI; the explicit per-call value downscopes the call so that setting never widens what the voice agent may do with the owner's number and brief |
+| `call.ended` subscription | `DEFAULT_WEBHOOK_EVENTS`, subscribed at `init`, by the gateway at signup, and added to older subscriptions when a self-hosted server boots (`ensureWebhookSubscription`) or the gateway boots (`backfillWebhookEvents`, one `ensureWebhookEvents` per ready user) | the only call event the agent listens to |
 | The report | `packages/inkbox/src/calls.ts` | one text to the owner: the outcome in a sentence, the last turns of the transcript, then the action items. Delivered through the runtime's owner route, so a dashboard-only owner gets it too. When the webhook's inline transcript is `null` the verbatim transcript is fetched with the identity key first |
 | Voice | `INKBOX_VOICE` or `config.json` `agent.voice` | at boot the server sets the identity's Voice AI config: the voice and a short instruction ("You are <owner>'s assistant calling on their behalf; be brief, polite, confirm names and times, never share the owner's card details or personal data"). No voice configured: the org default voice, config untouched |
 
@@ -152,7 +153,12 @@ and 30 call minutes a month; the Startup plan 9 numbers. Calls are US numbers. W
 iMessage line can originate calls on your organization's plan is not stated on the pricing page:
 confirm it with Inkbox (or place one test call to your own phone) before relying on it, and watch the
 `rate_limit.minutes_remaining` field Inkbox returns with every placed call. A call refused by the plan
-surfaces as the tool's error, which the agent reports plainly.
+surfaces as the tool's error, which the agent reports plainly. The tool result also carries the
+`minutes_remaining` figure when Inkbox returns one, so the agent can tell the owner when the plan is nearly out.
+
+Calls are recorded and transcribed by Inkbox. Laws on recording a call and on telling the other party vary by
+jurisdiction (some require every party's consent); you are responsible for the calls your agent places, so
+check the rules where you and the people it calls are.
 
 ## Webhooks and signing keys
 

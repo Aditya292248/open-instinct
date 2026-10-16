@@ -316,10 +316,16 @@ describe("phone_call", () => {
     expect(spec.meta?.describe?.({ toNumber: "+14155550123", reason: "Book a table for 4 at 7pm under Maria" })).toBe("phone_call +14155550123: Book a table for 4 at 7pm under Maria");
   });
 
-  it("places a hosted-agent call and returns the call id and status, nothing else", async () => {
+  it("places a hosted-agent call and returns the call id, status and the plan minutes left, nothing else", async () => {
     const r = await phone().execute({ toNumber: "(415) 555-0123", reason: "  Book a table for 4 at 7pm under Maria. " }, ctxFor(owner, "imessage:conv_1"));
-    expect(r).toEqual({ content: [{ type: "text", text: "Call call_9: initiated." }] });
+    expect(r).toEqual({ content: [{ type: "text", text: "Call call_9: initiated. 12 call minutes left on the plan this month." }] });
     expect(placed).toEqual([{ toNumber: "+14155550123", reason: "Book a table for 4 at 7pm under Maria." }]);
+  });
+
+  it("leaves the minutes out when Inkbox returned none", async () => {
+    phoneChannel = { ...channel, placeCall: vi.fn(async () => ({ id: "call_9", status: "initiated", origination: "shared_imessage_number" })) } as unknown as InkboxChannel;
+    const r = await phone().execute({ toNumber: "+14155550123", reason: "Say hi" }, ctxFor(owner, "imessage:conv_1"));
+    expect(r).toEqual({ content: [{ type: "text", text: "Call call_9: initiated." }] });
   });
 
   it("passes the voicemail message and a forced origination through", async () => {
@@ -352,11 +358,17 @@ describe("phone_call", () => {
     expect(() => phoneCallTool({ channel: phoneChannel, callOrigination: "carrier_pigeon" as never })).toThrow(/unknown call origination "carrier_pigeon"/);
   });
 
-  it("is denied by the policy guard for partners and below, allowed for the owner, opened by a grant", () => {
+  it("is held for the owner's yes even when the owner asks, asks for staff, is denied for partners and below, opened by a grant", () => {
     const spec = phone();
     const engine = new PolicyEngine(defaultPolicy(), { now: () => new Date("2026-10-16T12:00:00Z") });
     const args = { toNumber: "+14155550123", reason: "Say hi" };
-    expect(engine.evaluate(owner, spec.meta!, args).outcome).toBe("allow");
+    // Never "allow" outright: the owner's own thread can carry text the owner did not write.
+    const ownerAsk = engine.evaluate(owner, spec.meta!, args);
+    expect(ownerAsk.outcome).toBe("ask");
+    if (ownerAsk.outcome !== "ask") return;
+    expect(ownerAsk.approvalPrompt).toBe("phone_call +14155550123: Say hi. Want me to go ahead?");
+    const staff: Principal = { kind: "contact", id: "agent:teammate", tier: "staff", displayName: "Teammate" };
+    expect(engine.evaluate(staff, spec.meta!, args)).toMatchObject({ outcome: "ask", approvalPrompt: "Teammate asks: phone_call +14155550123: Say hi. Want me to go ahead?" });
     const partner: Principal = { kind: "contact", id: "contact:sam-lee", tier: "partner", displayName: "Sam Lee", contactId: "sam-lee" };
     expect(engine.evaluate(partner, spec.meta!, args)).toMatchObject({ outcome: "deny", reason: "tier partner may not phone.call" });
     expect(engine.evaluate(friend, spec.meta!, args).outcome).toBe("deny");

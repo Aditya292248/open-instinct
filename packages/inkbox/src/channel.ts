@@ -346,7 +346,12 @@ export class InkboxChannel implements Outbox {
     return identity.imessageNumber ? "dedicated_imessage_number" : "shared_imessage_number";
   }
 
-  /** Place an outbound call that Inkbox Voice AI drives. Voicemail gets a message, never a hang-up. */
+  /**
+   * Place an outbound call that Inkbox Voice AI drives. Voicemail gets a message, never a hang-up.
+   * The authority mode is pinned to `contact_scoped` on every call: an organization whose saved
+   * Voice AI authority is `yolo` would otherwise widen what the voice agent may do on the owner's
+   * behalf, and the policy guard only ever approved the number and the brief.
+   */
   async placeCall(input: PlaceCallInput): Promise<PlacedCall> {
     const identity = await this.identity();
     const origination = input.origination ?? (await this.defaultCallOrigination());
@@ -355,6 +360,7 @@ export class InkboxChannel implements Outbox {
       toNumber: input.toNumber,
       origination: origination as CallOrigin,
       mode: "hosted_agent" as Parameters<AgentIdentity["placeCall"]>[0]["mode"],
+      hostedAgentAuthorityMode: "contact_scoped" as Parameters<AgentIdentity["placeCall"]>[0]["hostedAgentAuthorityMode"],
       reason: input.reason,
       onVoicemail: "leave_message" as Parameters<AgentIdentity["placeCall"]>[0]["onVoicemail"],
       ...(input.voicemailMessage ? { voicemailMessage: input.voicemailMessage } : {}),

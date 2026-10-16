@@ -237,6 +237,26 @@ describe("gateway http", () => {
     expect(store.get("usr_ok")?.maritimeAgentId).toBe("agt_42");
   });
 
+  it("backfillWebhookEvents tops up every ready user's subscription, skips the rest, and survives a failure", async () => {
+    const seed = [
+      readyUser({ id: "usr_a", handle: "a-one", phone: "+14155550011", webhookSubscriptionId: "sub_a" }),
+      // Provisioned before the gateway recorded subscription ids: nothing to patch.
+      readyUser({ id: "usr_b", handle: "b-two", phone: "+14155550012" }),
+      // Still provisioning: provisionUser subscribes it with the full event list itself.
+      readyUser({ id: "usr_c", handle: "c-three", phone: "+14155550013", status: "provisioning", maritimeAgentId: undefined, webhookSubscriptionId: "sub_c" }),
+      readyUser({ id: "usr_d", handle: "d-four", phone: "+14155550014", webhookSubscriptionId: "sub_d" }),
+    ];
+    const { server, ink } = await boot({ seed });
+    ink.fail.ensureWebhookEvents = 1;
+    expect(await server.backfillWebhookEvents()).toBe(1);
+    expect(ink.calls.filter((c) => c.startsWith("ensureWebhookEvents"))).toEqual(["ensureWebhookEvents sub_a", "ensureWebhookEvents sub_d"]);
+    expect(await server.backfillWebhookEvents()).toBe(2);
+
+    const relayOnly = await boot({ seed, withInkbox: false });
+    expect(await relayOnly.server.backfillWebhookEvents()).toBe(0);
+    expect(relayOnly.ink.calls).toEqual([]);
+  });
+
   it("rate-limits signups per address and caps pending signups globally", async () => {
     const { base, store } = await boot({ signupLimits: { perIp: 2, windowMs: 60_000, maxPending: 3, pendingWindowMs: 3_600_000 } });
     const a = await signup(base, { name: "A", phone: "+14155550001", handle: "aaa-one" });
