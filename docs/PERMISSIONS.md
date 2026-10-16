@@ -119,8 +119,9 @@ The `payment_*` tools from `@open-instinct/payments` sit under the same table.
 
 The Link approval screen is a second check on top of this one. The owner sees the exact amount and
 merchant in Link before any card exists. The blocked-merchant policy scans every object key and scalar value
-in the arguments, including the `merchantName` of `payment_request`. The allow list matches recognized fields
-such as `merchant`, `vendor` and `store`, so `payment_request` still asks when an allow list is set. See
+in the arguments, including the `merchantName` of `payment_request`; the allow list reads every merchant field
+(`merchant`, `merchantName`, `vendor`, `store` and the like), so both lists apply to `payment_request`. A purchase
+counts toward the daily total once, when it is requested, and is given back if Link denies or expires it. See
 [packages/payments/README.md](../packages/payments/README.md).
 
 ## Who is the owner
