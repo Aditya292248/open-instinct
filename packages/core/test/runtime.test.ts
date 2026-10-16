@@ -1401,6 +1401,50 @@ describe("shortReason", () => {
   });
 });
 
+describe("restoreMessages in a tool loop", () => {
+  const now = new Date("2026-10-16T03:00:00Z");
+  const user = (i: number): AgentMessage => ({ role: "user", content: [{ type: "text", text: `ask ${i}` }], timestamp: i });
+  const call = (i: number): AgentMessage => ({ role: "assistant", content: [{ type: "toolCall", id: `c${i}`, name: "computer", arguments: { action: "screenshot" } }], api: "faux", provider: "faux", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: i });
+  const result = (i: number): AgentMessage => ({ role: "toolResult", toolCallId: `c${i}`, toolName: "computer", content: [{ type: "text", text: `shot ${i}` }], isError: false, timestamp: i });
+  const shot = (i: number, bytes: number): AgentMessage => ({ role: "toolResult", toolCallId: `c${i}`, toolName: "computer", content: [{ type: "image", data: "x".repeat(bytes), mimeType: "image/png" }, { type: "text", text: `{"ok":true,"n":${i}}` }], isError: false, timestamp: i });
+  const wellFormed = (kept: AgentMessage[]) => {
+    expect(kept[0]!.role).not.toBe("toolResult");
+    for (let i = 1; i < kept.length; i++) {
+      if (kept[i]!.role === "toolResult") expect(kept[i - 1]!.role === "assistant" || kept[i - 1]!.role === "toolResult").toBe(true);
+    }
+  };
+
+  it("starts at an assistant turn when no user turn is left in the window", () => {
+    const msgs: AgentMessage[] = [user(0)];
+    for (let i = 1; i <= 40; i++) msgs.push(call(i), result(i));
+    const kept = restoreMessages(msgs, now, 20);
+    expect(kept[0]!.role).toBe("user"); // the summary
+    expect(kept[1]!.role).toBe("assistant");
+    wellFormed(kept);
+  });
+
+  it("never starts the kept slice at a tool result when the newest screenshot alone is over budget", () => {
+    // One screenshot is bigger than the whole char budget, so the old fold walked forward
+    // until it sat on the tool result and the API rejected the turn with "messages with role
+    // 'tool' must be a response to a preceding message with 'tool_calls'".
+    const msgs: AgentMessage[] = [user(0), call(1), shot(1, 50_000), call(2), shot(2, 50_000)];
+    const kept = restoreMessages(msgs, now, 60, 10_000);
+    wellFormed(kept);
+    expect(kept.some((m) => m.role === "toolResult" && m.content.some((c) => c.type === "image"))).toBe(true);
+  });
+
+  it("swaps older screenshots for a placeholder and keeps the newest two", () => {
+    const msgs: AgentMessage[] = [user(0)];
+    for (let i = 1; i <= 5; i++) msgs.push(call(i), shot(i, 100));
+    const kept = restoreMessages(msgs, now, 60, 1_000_000);
+    const withImages = kept.filter((m) => m.role === "toolResult" && m.content.some((c) => c.type === "image"));
+    expect(withImages.map((m) => (m as { toolCallId: string }).toolCallId)).toEqual(["c4", "c5"]);
+    const dropped = kept.find((m) => m.role === "toolResult" && (m as { toolCallId: string }).toolCallId === "c1")!;
+    expect(dropped.content[0]).toEqual({ type: "text", text: "(an earlier screenshot, dropped to save space)" });
+    expect(dropped.content[1]).toEqual({ type: "text", text: '{"ok":true,"n":1}' });
+  });
+});
+
 describe("restoreMessages", () => {
   const user = (i: number): AgentMessage => ({ role: "user", content: [{ type: "text", text: `question ${i}` }], timestamp: i });
   const assistant = (i: number): AgentMessage => ({ role: "assistant", content: [{ type: "text", text: `answer ${i}` }], api: "faux", provider: "faux", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: i });
