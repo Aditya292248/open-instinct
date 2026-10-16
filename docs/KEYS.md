@@ -105,8 +105,8 @@ Variables: `LINK_CLIENT_ID`, `LINK_CLIENT_SECRET`, `STRIPE_PUBLISHABLE_KEY`, opt
    Google Form linked from the [Link CLI docs](https://docs.stripe.com/agentic-commerce/link-cli).
    There is no self-serve button in the dashboard. The form asks about your app, your users,
    where the agent runs, the scopes (`agentic payments`), a confidential client, and the
-   exact redirect URIs you will use (`https://<your-gateway>/oauth/link/callback/<userId>`
-   for the gateway, or `http://127.0.0.1:8080/oauth/link/callback` for a laptop).
+   exact redirect URIs you will use (`https://<your-gateway>/oauth/link/callback`
+   for the gateway, one URI for every agent, or `http://127.0.0.1:8080/oauth/link/callback` for a laptop).
    Stripe reviews applications every 3 to 5 days, so apply before you need payments.
    Walkthrough: [PAYMENTS.md](PAYMENTS.md#registering-an-oauth-client).
 3. Stripe sends a `client_id` and an encrypted `client_secret`. Your publishable key is in

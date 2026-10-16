@@ -346,6 +346,7 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
           clientSecret: payments.clientSecret,
           publishableKey: payments.publishableKey,
           redirectUri: payments.redirectUri,
+          ...(config.agent.handle ? { statePrefix: config.agent.handle } : {}),
           ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
         });
         return { wallet: w, tools: mod.paymentsTools({ wallet: w, outbox, config, audit, state }) };

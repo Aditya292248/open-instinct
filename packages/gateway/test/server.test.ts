@@ -398,6 +398,13 @@ describe("gateway http", () => {
     expect((await fetch(`${base}/oauth/link/callback/usr_nobody?code=x&state=y`)).status).toBe(404);
     expect((await fetch(`${base}/oauth/link/callback/usr_link`)).status).toBe(400);
 
+    // The single registered URI: the state's prefix is the agent's handle.
+    const one = await fetch(`${base}/oauth/link/callback?code=ac_456&state=${encodeURIComponent(`${store.get("usr_link")!.handle}.st_xyz`)}`);
+    expect(one.status).toBe(200);
+    expect(mar.calls).toHaveLength(2);
+    expect((mar.calls[1]?.body as { conversation_id: string }).conversation_id).toBe("link:usr_link");
+    expect((await fetch(`${base}/oauth/link/callback?code=ac&state=nobody-here.st`)).status).toBe(404);
+
     // An agent that is not provisioned yet cannot take the code; the page says so.
     store.save(readyUser({ id: "usr_new", status: "provisioning", maritimeAgentId: undefined }));
     const early = await fetch(`${base}/oauth/link/callback/usr_new?code=ac&state=st`);
