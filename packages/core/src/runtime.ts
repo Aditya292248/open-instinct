@@ -89,6 +89,8 @@ export interface HandleResult {
 export const SESSION_KEEP_MESSAGES = 60;
 /** Characters of kept transcript (JSON) before older turns are folded even if the count is under the limit. */
 export const SESSION_KEEP_CHARS = 240_000;
+/** How many of the newest image-bearing tool results keep their pictures through a fold. */
+export const KEEP_RECENT_IMAGES = 2;
 /** An approved request can be acted on for this long before it lapses. */
 export const APPROVAL_USE_WINDOW_MS = 15 * 60 * 1000;
 const SEEN_IDS_MAX = 500;
@@ -1240,10 +1242,12 @@ export function writeSession(file: string, messages: AgentMessage[]): void {
  * no more than SESSION_KEEP_CHARS of JSON) and fold everything older into one plain-text
  * summary message. Idempotent on an already folded transcript.
  */
-export function restoreMessages(stored: AgentMessage[], now: Date, keep = SESSION_KEEP_MESSAGES, maxChars = SESSION_KEEP_CHARS): AgentMessage[] {
-  const messages = dropOrphanToolCalls(stored.filter((m) => m.role !== "system"));
+export function restoreMessages(stored: AgentMessage[], now: Date, keep = SESSION_KEEP_MESSAGES, maxChars = SESSION_KEEP_CHARS, keepImages = KEEP_RECENT_IMAGES): AgentMessage[] {
+  const messages = dropOldImages(dropOrphanToolCalls(stored.filter((m) => m.role !== "system")), keepImages);
   let start = messages.length <= keep ? 0 : nextUserTurn(messages, messages.length - keep);
-  // Large tool results can blow the context long before the message count does.
+  // Large tool results can blow the context long before the message count does. The slice
+  // only ever moves to a user or assistant turn; when none is left it stays where it is,
+  // even above budget, because a slice that starts at a tool result is rejected outright.
   while (start < messages.length - 1 && charSize(messages.slice(start)) > maxChars) {
     const next = nextUserTurn(messages, start + 1);
     if (next >= messages.length || next === start) break;
@@ -1271,11 +1275,39 @@ export function trimContext(messages: AgentMessage[], now: Date): AgentMessage[]
   return system.length ? [...system, ...rest] : rest;
 }
 
-/** The kept slice must begin at a user turn so no tool result is left without its call. */
+/**
+ * The kept slice must begin at a user turn so no tool result is left without its call. A
+ * long tool loop (a browser session: screenshot, click, screenshot...) can run past the
+ * window with no user turn at all; then the slice begins at the next assistant turn, which
+ * the API also accepts, and never at a tool result, which it rejects. With nothing left to
+ * land on this returns the end, and the caller keeps the slice where it is.
+ */
 function nextUserTurn(messages: AgentMessage[], from: number): number {
   let i = from;
   while (i < messages.length && messages[i]?.role !== "user") i++;
-  return i >= messages.length ? from : i;
+  if (i < messages.length) return i;
+  let a = from;
+  while (a < messages.length && messages[a]?.role !== "assistant") a++;
+  return a;
+}
+
+/**
+ * A screenshot is a few hundred thousand characters of base64, more than the whole char
+ * budget, so a browser session would push the fold past every turn in one step. Older
+ * screenshots are swapped for a one-line placeholder; the newest few stay, since the model
+ * is looking at them. The text parts of the result are untouched.
+ */
+export function dropOldImages(messages: AgentMessage[], keepImages = KEEP_RECENT_IMAGES): AgentMessage[] {
+  let seen = 0;
+  const out = messages.slice();
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i]!;
+    if (m.role !== "toolResult" || !m.content.some((c) => c.type === "image")) continue;
+    seen++;
+    if (seen <= keepImages) continue;
+    out[i] = { ...m, content: m.content.map((c) => (c.type === "image" ? { type: "text" as const, text: "(an earlier screenshot, dropped to save space)" } : c)) };
+  }
+  return out;
 }
 
 function charSize(messages: AgentMessage[]): number {
