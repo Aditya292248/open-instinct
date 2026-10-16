@@ -308,7 +308,7 @@ Server:
 | `INSTINCT_PUBLIC_URL` | this agent's public URL, used to build the Link callback |
 | `INSTINCT_ACK_SLOW_REPLIES` | `1` texts the owner one "on it" in their 1:1 iMessage/SMS thread when a turn is still running after `INSTINCT_REPLY_BUDGET_MS` (`config.features.ackSlowReplies`); never for a queued text, a group or a non-owner |
 | `INSTINCT_REPLY_BUDGET_MS` | how long `/chat` waits before acknowledging, and the delay before the optional slow-reply text (default 20000) |
-| `INSTINCT_SKILLS_DIR` | SKILL.md folder (default `<repo>/skills`) |
+| `INSTINCT_SKILLS_DIR` | SKILL.md folder (default `<repo>/skills`); the owner's `<data>/skills` is read after it, every 30 s. Built-ins win a name clash, and an owner skill is private to the owner unless its frontmatter says `visibility: public` |
 | `INSTINCT_COMPUTER` | `auto` (desktopd if present, else hosted if `MARITIME_API_KEY`, else none), `desktopd`, `maritime`, `none` |
 | `MARITIME_API_KEY`, `MARITIME_COMPUTERS_MCP_URL` | hosted computer fallback |
 | `MARITIME_DESKTOP`, `MARITIME_AGENT_ID`, `MARITIME_BACKEND_URL`, `MARITIME_INTERNAL_TOKEN`, `PORT` | injected by Maritime inside a hosted agent |

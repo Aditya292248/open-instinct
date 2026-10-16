@@ -665,6 +665,27 @@ describe("AgentRuntime.handleInbound", () => {
     expect(h.runtime.conversation("chat:main", h.runtime.ownerPrincipal()).agent.state.systemPrompt).not.toContain("Working with other Instincts");
   });
 
+  it("builds the skills section per principal, so a stranger never sees the owner's private skills", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      deps: {
+        skillsPrompt: (p) => {
+          seen.push(p.kind);
+          return p.kind === "owner" && p.tier === "owner" ? "## skills\nprivate-haiku public-dining" : "## skills\npublic-dining";
+        },
+      },
+    });
+    h.faux.setResponses([textTurn("hi"), textTurn("ok")]);
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: "+15555550001", conversationKey: "imessage:s1", text: "hello" }));
+    const strangerConv = h.runtime.conversation("imessage:s1", { kind: "stranger", id: "stranger:imessage:+15555550001", tier: "stranger", displayName: "x" });
+    expect(strangerConv.agent.state.systemPrompt).toContain("public-dining");
+    expect(strangerConv.agent.state.systemPrompt).not.toContain("private-haiku");
+    await h.runtime.handleInbound(inbound({ channel: "chat", from: "owner", conversationKey: "chat:main", text: "hi" }));
+    expect(h.runtime.conversation("chat:main", h.runtime.ownerPrincipal()).agent.state.systemPrompt).toContain("private-haiku");
+    expect(seen).toContain("stranger");
+    expect(seen).toContain("owner");
+  });
+
   it("keeps the live transcript bounded across many turns in one process", async () => {
     const h = harness();
     const turns = SESSION_KEEP_MESSAGES / 2 + 10;
