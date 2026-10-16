@@ -53,6 +53,7 @@ described in the next section.
 | Web page | Prompt injection in page text or a screenshot | Untrusted wrapping; policy guard runs on every tool call |
 | Web page | Point `web_fetch` at the agent's own services | SSRF guard |
 | Web page | Make the agent change a payment amount or merchant | Owner sees the exact amount and merchant in Link before any card exists |
+| Web page, email or forwarded text | Prompt injection that dials a number through `phone_call` | `phone.call` is `ask` for everyone, the owner included: each call waits for the owner's own plain yes to that exact number and brief, and `approval_settle` cannot settle it; the Voice AI authority is pinned to `contact_scoped` per call, so an org-level `yolo` setting never widens what the call may do |
 | Attacker on the network | Forge a webhook that looks like an iMessage from the owner | Webhook signatures; `/chat` token and bind address |
 | Attacker on the network | Replay a captured webhook | 5 minute timestamp window; event id dedupe |
 | Attacker with the data dir | Read secrets or transcripts | Secrets at `0600`; bash sees no credentials; but see the limits below |

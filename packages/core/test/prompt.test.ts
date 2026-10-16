@@ -21,6 +21,13 @@ function input(overrides: Partial<PromptInput> = {}): PromptInput {
 }
 
 describe("buildSystemPrompt", () => {
+  it("tells the agent when it may phone someone and what it may say afterwards", () => {
+    const p = buildSystemPrompt(input());
+    expect(p).toContain(
+      "8. A phone call needs Maria's explicit yes first, with the number you will call and what you will say; a general request is not a yes. Every phone_call is held for Maria's own yes to that exact number and brief, even when Maria asked for the call, so call the tool once and wait rather than asking twice. After a call, report only what its transcript shows, never what you expect was said. Never call Maria's own contacts unless Maria asked for that call.",
+    );
+  });
+
   it("has every section for the owner", () => {
     const p = buildSystemPrompt(input());
     for (const heading of ["# You are Instinct", "# Your owner", "# Who you are talking to", "# Channel: imessage", "# Rules", "# Memory", "# Long tasks", "# Now"]) {

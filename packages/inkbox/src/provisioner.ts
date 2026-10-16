@@ -82,6 +82,7 @@ export const DEFAULT_WEBHOOK_EVENTS = [
   "a2a.task.message",
   "a2a.task.canceled",
   "a2a.sent_task.updated",
+  "call.ended",
 ] as const;
 
 export interface ProvisionInput {
@@ -235,6 +236,20 @@ export class InkboxProvisioner {
     const signingKey = str(raw.signing_key);
     if (signingKey) out.signingKey = signingKey;
     return out;
+  }
+
+  /**
+   * Make sure an existing subscription carries every event in `eventTypes`, keeping the
+   * ones it already has. Returns the events that were added. For identities subscribed
+   * before a new event existed (call.ended arrived after the first fleets were provisioned).
+   */
+  async ensureWebhookEvents(subscriptionId: string, eventTypes: readonly string[] = DEFAULT_WEBHOOK_EVENTS): Promise<string[]> {
+    const raw = await this.rest.request<Dict>("GET", `/webhooks/subscriptions/${encodeURIComponent(subscriptionId)}`);
+    const have = new Set((Array.isArray(raw.event_types) ? raw.event_types : []).filter((e): e is string => typeof e === "string"));
+    const missing = eventTypes.filter((e) => !have.has(e));
+    if (missing.length === 0) return [];
+    await this.rest.request("PATCH", `/webhooks/subscriptions/${encodeURIComponent(subscriptionId)}`, { event_types: [...have, ...missing] }, { scope: "identity" });
+    return missing;
   }
 
   /** The shared iMessage router: humans text `connect @handle` to this number. */

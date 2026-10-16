@@ -951,6 +951,18 @@ export class AgentRuntime {
   }
 
   /**
+   * For the server's own owner-facing texts (a finished phone call, for example): the same
+   * route as the runtime's messages. False when there is no way to reach the owner.
+   */
+  async relayToOwner(text: string, originKey: string, opts: { approvalToken?: string } = {}): Promise<boolean> {
+    const last = this.ownerLast;
+    const reachable = Boolean(this.deps.config.owner.phones[0]) || Boolean(last && DELIVERABLE.has(last.channel) && last.channel !== "a2a");
+    if (!reachable) return false;
+    await this.sendToOwner(text, this.ownerPrincipal(), originKey, opts);
+    return true;
+  }
+
+  /**
    * Owner messages go to the owner's last live text thread, else to their first phone by
    * iMessage, else to their last email thread. Group threads are never used for this.
    */
@@ -1455,8 +1467,10 @@ function approvalText(approval: Approval, requester: Principal, config: Instinct
   const who = requester.kind === "owner" ? "" : ` (asked by ${requester.displayName})`;
   const amount = approval.amountUsd !== undefined ? ` ($${approval.amountUsd.toFixed(2)})` : "";
   // A plain question, no token and no protocol words: a bare yes or no settles it, anything else the model settles.
+  // Policy prompts may already end with the question; strip it so it is asked exactly once.
   void config;
-  return `${approval.summary}${amount}${who}. Want me to go ahead?`;
+  const base = approval.summary.replace(/[\s.?!]*want me to go ahead\?\s*$/i, "").replace(/[\s.?!]+$/, "");
+  return `${base}${amount}${who}. Want me to go ahead?`;
 }
 
 function untrustedLabel(msg: InboundMessage, principal: Principal): string {

@@ -70,6 +70,7 @@ spend or scope limit.
 | `schedule.manage` | yes | no | no | no | no | no | no |
 | `web.read` (web_search, web_fetch; public hosts only) | yes | yes | yes | yes | yes | no | no |
 | `apps.use` (call a connected app tool) | yes | yes | yes | yes | yes | no | no |
+| `phone.call` (place a Voice AI call) | ask | ask | no | no | no | no | no |
 
 Legend: `yes` allowed · `ask` allowed after the owner approves by text · `limit` allowed within the owner's
 spend policy, otherwise ask · `no` denied.
@@ -86,6 +87,16 @@ and `*.local`. Redirects are followed by hand, at most three hops, and every hop
 Bodies are read up to 1 MiB. This keeps a friend's "fetch http://127.0.0.1:5911/fs/read?path=..." from
 reading the agent's own files. The check is a filter on the resolved addresses, not a pin; a server that
 wants to close the remaining DNS rebinding window passes a pinned `fetchImpl` into the core tools.
+
+`phone.call` is `phone_call`: the agent places a call that Inkbox Voice AI makes, with a task brief. It is
+`ask` for the owner too, the only capability that is: every call is held until the owner answers the policy's
+question with their own plain yes, naming the number and the brief. A call is outward-facing and billed, and
+the owner's own thread can carry text the owner did not write (a pasted page, a forwarded email), so an
+injected "call this number" must never dial on its own. The model's reading of the owner's words
+(`approval_settle`) cannot settle a call either, the same rule as for payments. Staff asks the owner;
+everyone else is denied unless a grant names `phone.call` (a grant is the owner's standing yes, so it opens the
+call without a question each time), and a grant to a partner's Instinct still runs the call from the owner's
+line. See [INKBOX.md](INKBOX.md#phone-calls).
 
 `computer.use` covers every desktop tool, including `request_takeover` and `takeover_status`. Only the
 owner has it, so no other person's Instinct can drive the desktop or hand it to a human.

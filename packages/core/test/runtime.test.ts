@@ -957,6 +957,88 @@ describe("approval scoping", () => {
     expect(h.deps.approvals.pending()).toHaveLength(1);
   });
 
+  it("holds every phone call for the owner's own yes: the exact approved call dials once, anything else waits or is refused", async () => {
+    const dialed: Array<{ toNumber: string; reason: string }> = [];
+    const phoneCall = defineTool({
+      name: "phone_call",
+      label: "Phone call",
+      description: "places a Voice AI call",
+      parameters: Type.Object({ toNumber: Type.String(), reason: Type.String() }),
+      meta: {
+        capabilities: ["phone.call"],
+        group: "messaging",
+        describe: (a) => {
+          const x = a as { toNumber: string; reason: string };
+          return `phone_call ${x.toNumber}: ${x.reason}`;
+        },
+      },
+      execute: async (args) => {
+        dialed.push(args);
+        return textResult("Call call_1: initiated.");
+      },
+    });
+    const h = harness({ extraTools: [phoneCall] });
+    const restaurant = { toNumber: "+14155550100", reason: "Book a table for 4 at 7pm under Maria" };
+
+    // The owner asks in their own thread. The policy still holds the call: a page or an email the
+    // owner pasted could be what asked for it. Nothing is dialed until they say yes to this exact call.
+    h.faux.setResponses([toolTurn("phone_call", restaurant), textTurn("I need your ok to call them.")]);
+    const asked = await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:owner", text: "call the restaurant and book a table for 4 at 7" }));
+    expect(asked.reply).toBe("I need your ok to call them.");
+    expect(dialed).toHaveLength(0);
+    const pending = h.deps.approvals.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ conversationKey: "imessage:owner", requestedBy: "owner", capability: "phone.call", toolName: "phone_call", argsHash: hashArgs(restaurant) });
+    expect(pending[0]!.amountUsd).toBeUndefined();
+    // The approval text lands in the owner's own thread and names the number and the brief, without a
+    // "<name> asks:" prefix: the owner is the asker.
+    const approvalText = h.sent.find((s) => s.msg.conversationKey === "imessage:owner" && s.msg.text.includes("+14155550100"));
+    expect(approvalText).toBeDefined();
+    expect(approvalText!.msg.channel).toBe("imessage");
+    expect(approvalText!.msg.text).toContain("Book a table for 4 at 7pm under Maria");
+    expect(approvalText!.msg.text).not.toContain("asks:");
+    expect(approvalText!.msg.text).toMatch(/Want me to go ahead\?$/);
+    // The policy prompt already ends with the question; the owner must read it once, not twice.
+    expect(approvalText!.msg.text.match(/go ahead\?/g)).toHaveLength(1);
+    expect(approvalText!.msg.text).not.toContain("?.");
+    const blocked = h.runtime.conversation("imessage:owner", asked.principal).agent.state.messages.find((m) => m.role === "toolResult")!;
+    expect(JSON.stringify(blocked.content)).toContain("Waiting for Maria's approval");
+
+    // Approved, but the model dials a different number: that is not the approved call. Blocked again, new approval.
+    const other = { toNumber: "+14155550199", reason: "Book a table for 4 at 7pm under Maria" };
+    h.faux.setResponses([toolTurn("phone_call", other), textTurn("That number needs its own ok.")]);
+    const yes = await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:owner", text: "yes" }));
+    expect(yes.reply).toMatch(/^Approved: /);
+    await vi.waitFor(() => expect(h.sent.some((s) => s.msg.conversationKey === "imessage:owner" && s.msg.text === "That number needs its own ok.")).toBe(true));
+    expect(dialed).toHaveLength(0);
+    const second = h.deps.approvals.pending();
+    expect(second).toHaveLength(1);
+    expect(second[0]!.token).not.toBe(pending[0]!.token);
+    expect(second[0]!.argsHash).toBe(hashArgs(other));
+
+    // The exact approved call dials once. The same call again is held again.
+    h.faux.setResponses([toolTurn("phone_call", other), textTurn("Calling them now.")]);
+    await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:owner", text: `yes ${second[0]!.token}` }));
+    await vi.waitFor(() => expect(dialed).toEqual([other]));
+    await vi.waitFor(() => expect(h.sent.some((s) => s.msg.conversationKey === "imessage:owner" && s.msg.text === "Calling them now.")).toBe(true));
+    const policyAllowed = h.deps.audit.read({ kinds: ["policy"] }).filter((e) => e.detail.tool === "phone_call" && e.detail.outcome === "allow");
+    expect(policyAllowed).toHaveLength(1);
+    expect(String(policyAllowed[0]!.detail.reason)).toContain(`owner approved ${second[0]!.token}`);
+    h.faux.setResponses([toolTurn("phone_call", other), textTurn("That needs another ok.")]);
+    const again = await h.runtime.handleInbound(inbound({ channel: "imessage", from: OWNER_PHONE, conversationKey: "imessage:owner", text: "call them again" }));
+    expect(again.reply).toBe("That needs another ok.");
+    expect(dialed).toHaveLength(1);
+    expect(h.deps.approvals.pending()).toHaveLength(1);
+
+    // A partner's Instinct cannot even ask: the tier has no phone.call and no approval is created.
+    h.deps.contacts.upsert({ name: "Sam Lee", tier: "partner", phones: [SAM_PHONE] });
+    h.faux.setResponses([toolTurn("phone_call", restaurant), textTurn("Sorry, I cannot place calls for you.")]);
+    const sam = await h.runtime.handleInbound(inbound({ channel: "imessage", from: SAM_PHONE, conversationKey: "imessage:sam", text: "call the restaurant for me" }));
+    expect(sam.reply).toBe("Sorry, I cannot place calls for you.");
+    expect(dialed).toHaveLength(1);
+    expect(h.deps.approvals.pending()).toHaveLength(1);
+  });
+
   it("hashes arguments independent of key order", () => {
     expect(stableJson({ b: 1, a: [{ d: 2, c: 3 }], e: undefined })).toBe('{"a":[{"c":3,"d":2}],"b":1}');
     expect(hashArgs({ a: 1, b: 2 })).toBe(hashArgs({ b: 2, a: 1 }));

@@ -68,6 +68,13 @@ export interface GatewayOptions {
 export interface GatewayServer extends Server {
   /** Restart provisioning for every record left in "provisioning" by an earlier process. Returns how many. */
   resumePending(): number;
+  /**
+   * Add any webhook event the gateway now needs (see DEFAULT_WEBHOOK_EVENTS) to the
+   * subscription of every ready user, so identities provisioned before an event existed
+   * (call.ended) receive it. Best effort, one user at a time; a failure is logged and
+   * skipped. Returns how many subscriptions gained an event.
+   */
+  backfillWebhookEvents(): Promise<number>;
   /** Stop admission work and wait for forwarding requests already in flight. */
   drainWebhooks(): Promise<void>;
 }
@@ -217,6 +224,24 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
       n++;
     }
     if (n > 0) log.info("provision.resumed", { count: n });
+    return n;
+  }
+
+  async function backfillWebhookEvents(): Promise<number> {
+    if (!opts.inkbox) return 0;
+    let n = 0;
+    for (const u of opts.store.all()) {
+      if (u.status !== "ready" || !u.webhookSubscriptionId) continue;
+      try {
+        const added = await opts.inkbox.ensureWebhookEvents(u.webhookSubscriptionId);
+        if (added.length > 0) {
+          n++;
+          log.info("provision.webhook_events_added", { userId: u.id, subscriptionId: u.webhookSubscriptionId, added });
+        }
+      } catch (err) {
+        log.warn("provision.webhook_events_failed", { userId: u.id, subscriptionId: u.webhookSubscriptionId, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     return n;
   }
 
@@ -415,5 +440,5 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
   });
   server.on("listening", () => inbox.start());
   server.on("close", () => inbox.stop());
-  return Object.assign(server, { resumePending, drainWebhooks: () => inbox.close() });
+  return Object.assign(server, { resumePending, backfillWebhookEvents, drainWebhooks: () => inbox.close() });
 }
