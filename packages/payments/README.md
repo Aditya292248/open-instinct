@@ -47,8 +47,12 @@ Link Agent Wallet uses OAuth 2.0 with PKCE. You need a client id, a client secre
 publishable key.
 
 1. Read the Stripe guide: <https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet/oauth>.
-2. Request a client through the Google form linked from that page. Give your app name, a short
-   description of what the agent buys, and the exact redirect URI(s) your deployment will use.
+2. Request a client through the "Link OAuth App Registration" Google Form linked from the
+   Link CLI page, <https://docs.stripe.com/agentic-commerce/link-cli>. Give your app name, a
+   short description of what the agent buys, the scope `agentic payments`, a confidential
+   client, and the exact redirect URI(s) your deployment will use. Stripe reviews
+   applications every 3 to 5 days; there is no instant self-serve path. Full walkthrough in
+   [docs/PAYMENTS.md](../../docs/PAYMENTS.md#registering-an-oauth-client).
 3. Redirect URIs must match exactly, including scheme, host, port and path. The server's default
    is `<INSTINCT_PUBLIC_URL>/oauth/link/callback`. For `instinct dev` it is
    `http://127.0.0.1:<port>/oauth/link/callback`. Register every variant you will use.
