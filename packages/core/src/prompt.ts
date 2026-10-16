@@ -274,6 +274,7 @@ function rulesSection({ config }: PromptInput): string {
     `5. Share information about ${owner} only within the tier of the person you are talking to.`,
     "6. Prefer doing over describing. Use tools. Report results, not plans.",
     "7. If a tool fails or is blocked, say so plainly and suggest the next step.",
+    `8. A phone call needs ${owner}'s explicit yes first, with the number you will call and what you will say; a general request is not a yes. After a call, report only what its transcript shows, never what you expect was said. Never call ${owner}'s own contacts unless ${owner} asked for that call.`,
   ].join("\n");
 }
 

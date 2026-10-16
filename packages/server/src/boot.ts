@@ -28,7 +28,8 @@ import {
   resolveModel,
 } from "@open-instinct/core";
 import type { InboundMessage, InstinctConfig, Outbox, RegisteredTool } from "@open-instinct/core";
-import { InkboxA2A, InkboxChannel, InkboxInboundHydrator, InkboxProvisioner, messagingTools, sendFileTool } from "@open-instinct/inkbox";
+import { CALL_ORIGINATIONS, InkboxA2A, InkboxChannel, InkboxInboundHydrator, InkboxProvisioner, handleCallEnded, messagingTools, sendFileTool, voiceInstructions } from "@open-instinct/inkbox";
+import type { CallEndedEvent, CallOrigination } from "@open-instinct/inkbox";
 import { computerGuidance, detectComputer } from "@open-instinct/computer";
 import type { ComputerBackend } from "@open-instinct/computer";
 import { ComposioApps, DEFAULT_TOOLKITS, OPENAI_COMPLETIONS_TOOL_LIMIT, appsGuidance, appsTools, composioModeFor } from "@open-instinct/apps";
@@ -74,6 +75,8 @@ export interface BootResult {
   wallet?: LinkWalletLike;
   /** Complete compact Inkbox events before handing them to the runtime. */
   hydrateInbound?: (message: InboundMessage) => Promise<InboundMessage>;
+  /** Set with Inkbox: text the owner the outcome of a finished phone call. */
+  onCallEnded?: (event: CallEndedEvent) => Promise<void>;
 }
 
 export const DEFAULT_MARITIME_MCP_URL = "https://mcp.maritime.sh";
@@ -189,8 +192,20 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
 
   // Messaging needs Inkbox. send_file does not: without a wire it still hands files
   // to the dashboard chat, which is how `instinct chat` and the smoke test get them.
-  if (channel) registry.registerMany(messagingTools({ channel, contacts, config, dataDir: state.root }));
+  const callOrigination = callOriginationFrom(env);
+  if (channel) registry.registerMany(messagingTools({ channel, contacts, config, dataDir: state.root, ...(callOrigination ? { callOrigination } : {}) }));
   else registry.register(sendFileTool({ contacts, config, dataDir: state.root }));
+  // Voice AI speaks as the owner's assistant. Only a chosen voice (INKBOX_VOICE or config.json agent.voice)
+  // triggers the write: the config is a full replace on Inkbox, and an unset voice keeps the org default.
+  const voice = env.INKBOX_VOICE?.trim() || config.agent.voice?.trim();
+  if (channel && voice) {
+    const ch = channel;
+    const set = await safely(log, "phone voice", async () => {
+      await ch.setVoiceConfig({ voice, instructions: voiceInstructions(config.owner.name) });
+      return true;
+    });
+    if (set) log(`phone voice: ${voice}`);
+  }
   const hydrator = channel ? new InkboxInboundHydrator({
     channel,
     mediaDir: state.path("workspace", "inbound"),
@@ -414,6 +429,7 @@ export async function boot(env: NodeJS.ProcessEnv, opts: BootOptions = {}): Prom
     chatBuffer,
     ...(wallet ? { wallet } : {}),
     ...(hydrator ? { hydrateInbound: (message: InboundMessage) => hydrator.hydrate(message) } : {}),
+    ...(channel ? { onCallEnded: callReporter(channel, (text, key) => runtime.relayToOwner(text, key), log) } : {}),
     async close() {
       stopScheduler();
       sync?.stop();
@@ -460,6 +476,29 @@ export function apiKeyFor(provider: string, env: NodeJS.ProcessEnv): string | un
     if (value) return value;
   }
   return undefined;
+}
+
+/** INKBOX_CALL_ORIGINATION, when it names a line Inkbox knows. Anything else is logged by the tool at boot. */
+export function callOriginationFrom(env: NodeJS.ProcessEnv): CallOrigination | undefined {
+  const raw = env.INKBOX_CALL_ORIGINATION?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if ((CALL_ORIGINATIONS as readonly string[]).includes(raw)) return raw as CallOrigination;
+  throw new Error(`INKBOX_CALL_ORIGINATION must be one of ${CALL_ORIGINATIONS.join(", ")}, not "${raw}"`);
+}
+
+/** The call.ended handler: fetch the transcript when the event has none, then one text to the owner. */
+export function callReporter(
+  channel: Pick<InkboxChannel, "callTranscript">,
+  relay: (text: string, originKey: string) => Promise<boolean>,
+  log: (m: string) => void,
+): (event: CallEndedEvent) => Promise<void> {
+  return async (event) => {
+    await handleCallEnded(event, {
+      fetchTranscript: (callId) => channel.callTranscript(callId),
+      relayToOwner: (text) => relay(text, `system:call:${event.callId}`),
+      logger: log,
+    });
+  };
 }
 
 interface InkboxSettings {

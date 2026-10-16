@@ -25,7 +25,7 @@ describe("DEFAULT_TIER_TABLE", () => {
         expect(DEFAULT_TIER_TABLE[tier][cap], `${tier}/${cap}`).toBeDefined();
       }
     }
-    expect(ALL_CAPABILITIES.length).toBe(26);
+    expect(ALL_CAPABILITIES.length).toBe(27);
   });
 
   it("matches docs/PERMISSIONS.md on the rows that have special values", () => {
@@ -42,6 +42,10 @@ describe("DEFAULT_TIER_TABLE", () => {
     expect(DEFAULT_TIER_TABLE.stranger["owner.relay"]).toBe("yes");
     expect(DEFAULT_TIER_TABLE.partner["email.read"]).toBe("no");
     expect(DEFAULT_TIER_TABLE.partner["email.send"]).toBe("ask");
+    expect(DEFAULT_TIER_TABLE.owner["phone.call"]).toBe("yes");
+    expect(DEFAULT_TIER_TABLE.staff["phone.call"]).toBe("ask");
+    expect(DEFAULT_TIER_TABLE.partner["phone.call"]).toBe("no");
+    expect(DEFAULT_TIER_TABLE.stranger["phone.call"]).toBe("no");
     expect(DEFAULT_TIER_TABLE.family["owner.location.approx"]).toBe("yes");
     expect(DEFAULT_TIER_TABLE.friend["owner.location.approx"]).toBe("no");
   });

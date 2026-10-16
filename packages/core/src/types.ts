@@ -64,7 +64,8 @@ export type Capability =
   | "trust.manage"
   | "schedule.manage"
   | "web.read"
-  | "apps.use";
+  | "apps.use"
+  | "phone.call";
 
 /** What a tier gets for a capability by default. */
 export type Permission = "yes" | "ask" | "limit" | "no" | "intro" | "partial";
@@ -247,7 +248,7 @@ export interface OwnerProfile {
 export interface InstinctConfig {
   version: 1;
   owner: OwnerProfile;
-  agent: { name: string; handle?: string; persona?: string };
+  agent: { name: string; handle?: string; persona?: string; /** Inkbox Voice AI voice id for phone calls. INKBOX_VOICE overrides it. */ voice?: string };
   model: { primary: string; fallback?: string; cheap?: string; thinking?: "off" | "minimal" | "low" | "medium" | "high" };
   computer: { mode: "auto" | "desktopd" | "maritime" | "none"; desktopdUrl?: string; maritimeMcpUrl?: string };
   apps: { enabled: boolean; toolkits: string[] };

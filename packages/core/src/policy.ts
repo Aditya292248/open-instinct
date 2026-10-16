@@ -65,6 +65,9 @@ const ROWS: Record<Capability, Row> = {
   "web.read": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
   // apps.use: call connected app tools; each app tool also carries its own capability.
   "apps.use": ["yes", "yes", "yes", "yes", "yes", "no", "no"],
+  // phone.call: place a Voice AI call to a phone number. The owner says yes in the thread first (prompt rule 8);
+  // staff asks the owner; partners and below are denied unless a grant names phone.call.
+  "phone.call": ["yes", "ask", "no", "no", "no", "no", "no"],
 };
 
 /** Capabilities that move money. The owner gets them under the spend policy; a grant never skips it. */

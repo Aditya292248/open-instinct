@@ -148,6 +148,22 @@ describe("InkboxProvisioner: keys, webhooks, router, A2A", () => {
     expect(out).toEqual({ subscriptionId: "sub_1", signingKey: "whsec_new" });
     expect(fake.calls[0]?.body).toEqual({ url: "https://gw/hook", event_types: [...DEFAULT_WEBHOOK_EVENTS], agent_identity_id: "ident_1" });
     expect(DEFAULT_WEBHOOK_EVENTS).toContain("a2a.sent_task.updated");
+    expect(DEFAULT_WEBHOOK_EVENTS).toContain("call.ended");
+  });
+
+  it("adds missing events to an older subscription and leaves a complete one alone", async () => {
+    const fake = fakeFetch({
+      "GET /api/v1/webhooks/subscriptions/sub_old": { body: { id: "sub_old", event_types: ["imessage.received", "custom.event"] } },
+      "PATCH /api/v1/webhooks/subscriptions/sub_old": { body: { id: "sub_old" } },
+      "GET /api/v1/webhooks/subscriptions/sub_new": { body: { id: "sub_new", event_types: [...DEFAULT_WEBHOOK_EVENTS] } },
+    });
+    const added = await provisioner(fake).ensureWebhookEvents("sub_old");
+    expect(added).toEqual(DEFAULT_WEBHOOK_EVENTS.filter((e) => e !== "imessage.received"));
+    const patch = fake.calls.find((c) => c.method === "PATCH");
+    expect(patch?.query).toEqual({ scope: "identity" });
+    expect(patch?.body).toEqual({ event_types: ["imessage.received", "custom.event", ...added] });
+    expect(await provisioner(fake).ensureWebhookEvents("sub_new")).toEqual([]);
+    expect(fake.calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
   });
 
   it("omits signingKey when the server returns null", async () => {

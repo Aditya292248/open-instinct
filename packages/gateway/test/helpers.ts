@@ -102,6 +102,10 @@ export function fakeInkbox(opts: { subscriptionSigningKey?: string } = {}): Fake
       return { id: "inv_1" };
     },
     async deleteIdentity() {},
+    async ensureWebhookEvents(subscriptionId: string) {
+      calls.push(`ensureWebhookEvents ${subscriptionId}`);
+      return [];
+    },
   } as unknown as InkboxProvisioner;
   return { calls, provisioner, fail };
 }
