@@ -998,6 +998,9 @@ describe("approval scoping", () => {
     expect(approvalText!.msg.text).toContain("Book a table for 4 at 7pm under Maria");
     expect(approvalText!.msg.text).not.toContain("asks:");
     expect(approvalText!.msg.text).toMatch(/Want me to go ahead\?$/);
+    // The policy prompt already ends with the question; the owner must read it once, not twice.
+    expect(approvalText!.msg.text.match(/go ahead\?/g)).toHaveLength(1);
+    expect(approvalText!.msg.text).not.toContain("?.");
     const blocked = h.runtime.conversation("imessage:owner", asked.principal).agent.state.messages.find((m) => m.role === "toolResult")!;
     expect(JSON.stringify(blocked.content)).toContain("Waiting for Maria's approval");
 

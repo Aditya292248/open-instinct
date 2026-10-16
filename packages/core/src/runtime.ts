@@ -1435,8 +1435,10 @@ function approvalText(approval: Approval, requester: Principal, config: Instinct
   const who = requester.kind === "owner" ? "" : ` (asked by ${requester.displayName})`;
   const amount = approval.amountUsd !== undefined ? ` ($${approval.amountUsd.toFixed(2)})` : "";
   // A plain question, no token and no protocol words: a bare yes or no settles it, anything else the model settles.
+  // Policy prompts may already end with the question; strip it so it is asked exactly once.
   void config;
-  return `${approval.summary}${amount}${who}. Want me to go ahead?`;
+  const base = approval.summary.replace(/[\s.?!]*want me to go ahead\?\s*$/i, "").replace(/[\s.?!]+$/, "");
+  return `${base}${amount}${who}. Want me to go ahead?`;
 }
 
 function untrustedLabel(msg: InboundMessage, principal: Principal): string {
