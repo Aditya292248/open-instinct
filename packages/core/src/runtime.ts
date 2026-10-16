@@ -60,7 +60,12 @@ export interface RuntimeDeps {
   registry: ToolRegistry;
   model: Model<any>;
   outbox: Outbox;
-  skillsPrompt?: string;
+  /**
+   * The skills section, or a function that rebuilds it on each prompt for the conversation's
+   * principal, so skills installed at runtime appear on the next turn and private skills are
+   * listed only to whoever may load them.
+   */
+  skillsPrompt?: string | ((principal: Principal) => string | undefined);
   streamFn?: StreamFn;
   now?: () => Date;
   replyBudgetMs?: number;
@@ -1031,7 +1036,7 @@ export class AgentRuntime {
       // Read fresh each time so `instinct persona set` applies on the next message.
       persona: readPersona(state),
       instructions: readAgentsInstructions(state),
-      skillsPrompt,
+      skillsPrompt: typeof skillsPrompt === "function" ? skillsPrompt(principal) : skillsPrompt,
       pendingApprovals: pending,
       setup: this.deps.setupSummary?.(),
       extra,
