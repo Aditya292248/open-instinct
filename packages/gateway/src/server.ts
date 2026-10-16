@@ -48,6 +48,12 @@ export interface GatewayOptions {
    */
   notifyExisting?: (user: UserRecord, connectUrl: string) => Promise<void>;
   /**
+   * Renders the one-line pages people see at the end of a flow that lands on the gateway
+   * (the Link wallet callback, a lost connect page). A front door with its own brand passes
+   * its page renderer; the default is the gateway's own look.
+   */
+  renderPage?: (title: string, text: string, status: "ok" | "error") => string;
+  /**
    * Called with every verified, parsed inbound event before it is queued for the
    * agent. A front door can learn the sender's phone from the first message or
    * keep counters. It gets a deep copy, so it cannot change what is relayed. A throw
@@ -327,9 +333,17 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
   }
 
   /** Link sends the browser here after approval. The code goes to the agent, which holds the PKCE verifier. */
+  const page = opts.renderPage ?? renderMessage;
+  const linkDone = (ok: boolean): string =>
+    opts.renderPage
+      ? ok
+        ? opts.renderPage("Connected", "Your wallet is on its way to your agent. Go back to your messages; it will confirm there.", "ok")
+        : opts.renderPage("Not connected", "The wallet connection could not be handed to your agent right now. Ask it to try again from your messages.", "error")
+      : renderLinkDone(ok);
+
   async function handleLinkCallback(res: ServerResponse, userId: string, query: URLSearchParams): Promise<void> {
     const user = opts.store.get(userId);
-    if (!user) return html(res, 404, renderMessage("Not found", "No Instinct with that id.", "error"));
+    if (!user) return html(res, 404, page("Not found", "No agent with that id.", "error"));
     const code = query.get("code") ?? "";
     const state = query.get("state") ?? "";
     const error = query.get("error") ?? undefined;
@@ -338,7 +352,7 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
     if (error) event["error"] = error;
     const result = await relayGatewayEvent(user, event, `link:${user.id}`, relayDeps);
     log.info("link.callback", { userId: user.id, status: result.status, reason: result.reason });
-    return html(res, result.status === "forwarded" ? 200 : 502, renderLinkDone(result.status === "forwarded"));
+    return html(res, result.status === "forwarded" ? 200 : 502, linkDone(result.status === "forwarded"));
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -377,6 +391,15 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
     if (parts[0] === "oauth" && parts[1] === "link" && parts[2] === "callback" && parts.length === 4) {
       if (method !== "GET") throw new HttpError(405, "method not allowed");
       return handleLinkCallback(res, decodeURIComponent(parts[3] ?? ""), url.searchParams);
+    }
+    if (parts[0] === "oauth" && parts[1] === "link" && parts[2] === "callback" && parts.length === 3) {
+      // One registered redirect URI for the whole fleet: the agent put its handle in front of the
+      // OAuth state (`<handle>.<random>`), so the callback finds the user from there.
+      if (method !== "GET") throw new HttpError(405, "method not allowed");
+      const handle = (url.searchParams.get("state") ?? "").split(".")[0] ?? "";
+      const user = handle ? opts.store.byHandle(handle) : undefined;
+      if (!user) return html(res, 404, page("Not found", "This link does not belong to an agent here. Start the connection again from your agent.", "error"));
+      return handleLinkCallback(res, user.id, url.searchParams);
     }
     throw new HttpError(404, "not found");
   }

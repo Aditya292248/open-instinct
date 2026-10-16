@@ -95,10 +95,12 @@ will use, including staging. Stripe discourages `localhost` URIs; if you need on
 |---|---|
 | `instinct dev` | `http://127.0.0.1:<port>/oauth/link/callback` |
 | Single agent with a public URL | `<INSTINCT_PUBLIC_URL>/oauth/link/callback` |
-| Behind the gateway | `<GATEWAY_PUBLIC_URL>/oauth/link/callback/<userId>` |
+| Behind the gateway | `<GATEWAY_PUBLIC_URL>/oauth/link/callback` (one URI for every agent) |
 
-In the gateway case, the gateway receives the callback and relays it to the right agent
-as a `link.oauth_callback` event. The agent finishes the token exchange.
+In the gateway case one registered URI serves the whole fleet: each agent puts its handle in
+front of the OAuth `state` (`<handle>.<random>`), the gateway finds the user from it and
+relays the callback to that agent as a `link.oauth_callback` event. The agent finishes the
+token exchange. The older per-user path `/oauth/link/callback/<userId>` still works.
 
 Scopes requested: `payment_methods.agentic userinfo:read`. Access tokens last one hour.
 Refresh tokens rotate on every refresh. Authorization codes expire after 10 minutes.

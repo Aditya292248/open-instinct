@@ -85,8 +85,13 @@ export function webhookUrlFor(publicUrl: string, userId: string): string {
 }
 
 /** Where Link sends the browser after the owner approves the wallet connection. */
-export function linkRedirectUriFor(publicUrl: string, userId: string): string {
-  return `${publicUrl.replace(/\/+$/, "")}/oauth/link/callback/${encodeURIComponent(userId)}`;
+/**
+ * One redirect URI for every agent behind this gateway, so the operator registers a single URI
+ * with Stripe. The agent prefixes the OAuth state with its handle and the gateway routes on it;
+ * the per-user path `/oauth/link/callback/<userId>` still works for older agents.
+ */
+export function linkRedirectUriFor(publicUrl: string, _userId?: string): string {
+  return `${publicUrl.replace(/\/+$/, "")}/oauth/link/callback`;
 }
 
 /** The persona Maritime shows in its dashboard. The agent's real prompt is built in core. */
