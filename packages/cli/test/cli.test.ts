@@ -261,6 +261,15 @@ describe("schedules", () => {
     expect(entry?.nextRunAt).toBe("2030-01-01T09:00:00.000Z");
   });
 
+  it.each(["0 9 * * monkey", "0 9 * janitor *"])("rejects malformed names without saving %s", async (cron) => {
+    const dir = tmpDir();
+    const result = await run(["schedules", "add", cron, "Morning brief", "--tz", "UTC"], { INSTINCT_DATA_DIR: dir });
+    expect(result.code).toBe(2);
+    expect(result.err).toContain("bad value");
+    expect(result.err).toContain("instinct schedules --help");
+    expect(new Scheduler(new StateDir(dir)).list()).toHaveLength(0);
+  });
+
   it("rejects malformed cron", async () => {
     const r = await run(["schedules", "add", "0 8 * *", "too few fields"], { INSTINCT_DATA_DIR: tmpDir() });
     expect(r.code).toBe(2);
