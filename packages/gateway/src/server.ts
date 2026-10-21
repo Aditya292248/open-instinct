@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { InkboxProvisioner } from "@open-instinct/inkbox";
-import { DurableInbox } from "@open-instinct/inkbox";
+import { DurableInbox, RetryAfterError } from "@open-instinct/inkbox";
 import { join } from "node:path";
 import { type SignupLimits, SlidingWindowLimiter, clientAddress, pendingCount, signupLimits } from "./limits.js";
 import { type Logger, consoleLogger } from "./logger.js";
@@ -162,7 +162,11 @@ export function createGateway(opts: GatewayOptions): GatewayServer {
       }
       if (!user.maritimeAgentId) throw new Error("Agent is not ready");
       const result = await relayVerifiedEvent(user, event, relayDeps);
-      if (result.status === "rejected") throw new Error(result.reason ?? "Forwarding failed");
+      if (result.status === "rejected") {
+        const reason = result.reason ?? "Forwarding failed";
+        if (result.retryAfterMs !== undefined) throw new RetryAfterError(reason, result.retryAfterMs);
+        throw new Error(reason);
+      }
     },
     onError: (id, status) => log.warn("relay.pending", { id, status }),
   });
