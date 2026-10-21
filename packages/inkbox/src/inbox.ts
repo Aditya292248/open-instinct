@@ -50,19 +50,23 @@ export class DurableInbox<T> {
     }));
   }
 
-  enqueue(id: string, payload: T): boolean {
+  enqueue(id: string, payload: T, delayMs = 0): boolean {
     if (this.closed) throw new Error("Webhook inbox is closed");
     if (this.rows.has(id)) return false;
     if (!id) throw new Error("Webhook event id is required");
+    if (!Number.isFinite(delayMs) || delayMs < 0) throw new Error("Webhook retry delay must be non-negative and finite");
     const pending = [...this.rows.values()].filter((row) => row.status !== "done").length;
     if (pending >= (this.opts.maxPending ?? 5000)) throw new Error("Webhook inbox is full");
-    this.rows.set(id, { id, payload: structuredClone(payload), status: "queued", attempts: 0, nextAttemptAt: this.now() });
+    this.rows.set(id, { id, payload: structuredClone(payload), status: "queued", attempts: 0, nextAttemptAt: this.now() + delayMs });
     try {
       this.persist();
     } catch (err) {
       this.rows.delete(id);
       throw err;
     }
+    // A new receipt may be due before the timer for an older, delayed receipt.
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
     this.schedule();
     return true;
   }

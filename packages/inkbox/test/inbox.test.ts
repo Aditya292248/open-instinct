@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DurableInbox, RetryAfterError } from "../src/inbox.js";
 
 const file = () => join(mkdtempSync(join(tmpdir(), "inkbox-inbox-")), "receipts.json");
@@ -61,6 +61,20 @@ describe("durable inbox", () => {
     await second.drain();
     expect(calls).toBe(1);
     expect(second.summary().done).toBe(1);
+  });
+
+  it("wakes for a new receipt while an older receipt has a long delay", async () => {
+    const received: string[] = [];
+    const inbox = new DurableInbox({
+      file: file(), now: () => 1000,
+      handle: async (payload: string) => { received.push(payload); },
+    });
+    inbox.start();
+    inbox.enqueue("delayed", "later", 30_000);
+    inbox.enqueue("new", "now");
+    await vi.waitFor(() => expect(received).toEqual(["now"]));
+    expect(inbox.summary()).toMatchObject({ queued: 1, done: 1 });
+    await inbox.close();
   });
 
   it("does not replay uncertain work or permit a duplicate to reset it", async () => {
