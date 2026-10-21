@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DurableInbox } from "../src/inbox.js";
+import { DurableInbox, RetryAfterError } from "../src/inbox.js";
 
 const file = () => join(mkdtempSync(join(tmpdir(), "inkbox-inbox-")), "receipts.json");
 
@@ -35,6 +35,29 @@ describe("durable inbox", () => {
     expect(first.summary().queued).toBe(1);
     let calls = 0;
     const second = new DurableInbox({ file: path, now: () => 10, handle: async () => { calls++; } });
+    await second.drain();
+    expect(calls).toBe(1);
+    expect(second.summary().done).toBe(1);
+  });
+
+  it("persists a server-requested retry delay across restart", async () => {
+    const path = file();
+    const first = new DurableInbox({
+      file: path, now: () => 1000,
+      handle: async () => { throw new RetryAfterError("rate limited", 30_000); },
+    });
+    first.enqueue("event", "body");
+    await first.drain();
+    expect(JSON.parse(readFileSync(path, "utf8")).receipts[0]).toMatchObject({
+      status: "queued", attempts: 1, nextAttemptAt: 31_000, payload: "body",
+    });
+
+    let calls = 0;
+    let now = 30_999;
+    const second = new DurableInbox({ file: path, now: () => now, handle: async () => { calls++; } });
+    await second.drain();
+    expect(calls).toBe(0);
+    now = 31_000;
     await second.drain();
     expect(calls).toBe(1);
     expect(second.summary().done).toBe(1);
